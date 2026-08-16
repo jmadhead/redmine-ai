@@ -127,12 +127,12 @@ Supported languages: c, cpp, java, javascript, python, ruby, shell, sql, yaml, a
 2. Break down parent work into logical, self-contained subtasks
 3. Each subtask should be independently completable and verifiable
 4. Link subtasks to parent using `parent_issue_id` during creation
-5. Use `redmine_redmine_update_issue` to set the parent if needed
+5. Use `redmine_redmine_add_relation` to express dependencies between subtasks
 
 ### Subtask Structure Rules
 - **Up to 30 subtasks per parent** — break down until each unit is clear and completable
 - **Each subtask must have clear acceptance criteria**
-- **Subtasks should follow logical order** — consider dependencies between them
+- **Subtasks should follow logical order** — use `redmine_redmine_add_relation` to express dependencies between subtasks
 - **Use the same component prefix** in subtask subjects as the parent
 
 Example breakdown:
@@ -149,23 +149,52 @@ Parent: [api] Implement pool filtering by yield range
 - Parent should not be marked complete until all subtasks are complete
 - Update parent when subtasks change status
 
-## Related Issues
+## Related Issues (Using Redmine Relations)
 
-### Linking Related Issues
-Use `redmine_redmine_update_issue` with descriptive notes when linking:
-- `relates_to: #124` — general relationship
-- `blocks: #124` — this issue depends on another being complete
-- `blocked_by: #124` — this issue prevents another from starting
-- `duplicates: #124` — same issue tracked twice
-- `precedes: #124` — this issue should be done before another
-- `follows: #124` — this issue should be done after another
+Always use Redmine's native issue relations instead of text-based dependency/relates annotations in descriptions or notes.
+
+### Available Relation Types
+- `relates` — general relationship between issues
+- `blocks` — this issue blocks the linked issue (this is a dependency)
+- `follows` — this issue follows the linked issue (this depends on the other)
+- `duplicates` — same issue tracked twice
+- `duplicate` — this issue is a duplicate of the linked issue
+- `precedes` — this issue precedes the linked issue
+
+### Using `is_def` (Inverted Flag)
+The `is_def` parameter controls relation direction:
+- `is_def: true` → "blocks" means this issue blocks the linked one; "follows" means this issue follows the linked one
+- `is_def: false` → "blocks" means the linked issue blocks this one; "follows" means this issue follows the linked one
+
+**Quick reference:**
+- "A blocks B" (A is a dependency of B): `is_def: true, type: "blocks"` on A's side
+- "A depends on B" (B blocks A): `is_def: false, type: "blocks"` on A's side
+
+### Creating Relations
+
+**Add a single relation** after creating issues:
+```
+redmine_redmine_add_relation(issue_id=<A>, issue_to_id=<B>, type="blocks", is_def=false)
+```
+
+**Set multiple relations at once** during issue update (replaces all existing relations):
+```
+redmine_redmine_update_issue(id=<A>, relations=[
+  {issue_to_id: <B>, type: "blocks", is_def: false},
+  {issue_to_id: <C>, type: "relates", is_def: false}
+])
+```
+
+### Reading Relations
+- Get an issue's relations: `redmine_redmine_get_relations(issue_id=<id>)`
+- Relations are included in `redmine_redmine_get_issue(id=<id>)` response under `relations` array
 
 ### Identifying Related Issues
 When creating an issue, check for existing related issues:
 1. Search by component prefix: `redmine_redmine_list_issues(project_id=..., subject="[component]")`
 2. Check for duplicates before creating
-3. Link to related issues rather than creating separate ones for the same work
-4. Reference related issues in the description using `#124` syntax
+3. Link to related issues using MCP tools rather than creating separate ones for the same work
+4. Reference related issues in the description using `#124` syntax (for text links only)
 
 ## Issue Lifecycle Workflow
 
@@ -190,7 +219,7 @@ This returns all reference data needed: projects, issue statuses, trackers, cate
 4. Create the issue: `redmine_redmine_create_issue(project_id=..., subject=..., tracker_id=..., custom_fields=[{id: ..., value: ...}], ...)`
 5. Set priority — only High or Low
 6. Add description with the task description template
-7. Link to related issues if any exist
+7. Link to related issues using `redmine_redmine_add_relation` or `relations` parameter in `redmine_redmine_update_issue`
 8. Assign to responsible person (or leave unassigned for backlog)
 
 ### Updating Issues
@@ -199,6 +228,7 @@ This returns all reference data needed: projects, issue statuses, trackers, cate
 3. Add a `notes` field for private updates explaining the change
 4. Update `done_ratio` incrementally as work progresses (0-100)
 5. Update custom fields as needed
+6. Manage relations via `redmine_redmine_add_relation`, `redmine_redmine_remove_relation`, or `relations` parameter in `redmine_redmine_update_issue`
 
 ### Status Transitions
 
@@ -338,7 +368,7 @@ When creating a parent with multiple subtasks:
 - **Break down by logical units** — not by time estimates
 - **Each subtask should be independently deployable** if applicable
 - **Consider parallel work** — can subtasks be done simultaneously?
-- **Document dependencies** — explicitly note if subtasks depend on each other
+- **Link subtask dependencies** — use `redmine_redmine_add_relation` to link subtasks that depend on each other
 - **Review subtask breakdown** — ask "would a new team member understand this?"
 
 ### Communication
@@ -366,7 +396,7 @@ When creating a parent with multiple subtasks:
 - [ ] Write description using task template (What/How/Testing/Notes)
 - [ ] Set priority (High or Low)
 - [ ] Set category if applicable
-- [ ] Link to related issues
+- [ ] Link to related issues using `redmine_redmine_add_relation` or `relations` parameter
 - [ ] Add parent issue if this is a subtask
 
 ### Updating an Issue
@@ -375,7 +405,7 @@ When creating a parent with multiple subtasks:
 - [ ] Add private notes explaining changes
 - [ ] Update done_ratio if progress changed
 - [ ] Update status if appropriate (discover valid flow from API)
-- [ ] Add/remove related issues if relationships changed
+- [ ] Add/remove related issues if relationships changed (use `redmine_redmine_add_relation`, `redmine_redmine_remove_relation`, or `relations` parameter)
 
 ### Completing Work
 - [ ] Verify all acceptance criteria are met
@@ -389,7 +419,7 @@ When creating a parent with multiple subtasks:
 - [ ] Break parent into logical, independent units
 - [ ] Ensure each subtask has clear acceptance criteria
 - [ ] Set parent_issue_id for each subtask
-- [ ] Link subtasks to parent
+- [ ] Use `redmine_redmine_add_relation` to link subtasks with dependency relationships
 - [ ] Track parent status based on subtask progress
 
 ## Constraints

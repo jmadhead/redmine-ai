@@ -182,7 +182,7 @@ export class RedmineClient {
   async removeIssueRelation(issueId: number, relationId: number): Promise<void> {
     await redmineRequest(
       this.config,
-      `/issues/${issueId}/relations/${relationId}.json`,
+      `/relations/${relationId}.json`,
       "DELETE"
     );
   }
@@ -191,16 +191,33 @@ export class RedmineClient {
     issueId: number,
     relation: { issue_to_id: number; relation_type: string; inverted?: boolean }
   ): Promise<any> {
-    return redmineRequest(
-      this.config,
-      `/issues/${issueId}/relations.json`,
-      "POST",
-      {
-        issue_to_id: relation.issue_to_id,
-        relation_type: relation.relation_type,
-        inverted: relation.inverted,
-      }
-    );
+    const { config } = this;
+    const url = `${config.url}/issues/${issueId}/relations.json`;
+    const headers = {
+      "Content-Type": "application/json",
+      "X-Redmine-API-Key": config.apiKey,
+    };
+    const body = { relation };
+    const response = await fetch(url, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
+    });
+
+    if (!response.ok) {
+      const errorText = await response.text().catch(() => "");
+      const statusText = response.status === 404 ? "Not Found" : response.statusText;
+      const message = errorText ? `Redmine API error (${response.status}): ${statusText} - ${errorText.slice(0, 500)}` : `Redmine API error (${response.status}): ${statusText}`;
+      throw new Error(message);
+    }
+
+    const text = await response.text();
+    if (!text) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
   }
 
   async getProjects(

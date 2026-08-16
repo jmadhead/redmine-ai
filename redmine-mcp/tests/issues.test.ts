@@ -128,8 +128,8 @@ describe('registerIssues', () => {
     expect(relationCall[0]).toContain('/issues/100/relations.json');
     expect((relationCall[1] as any).method).toBe('POST');
     const body = JSON.parse((relationCall[1] as any).body);
-    expect(body.issue.issue_to_id).toBe(400);
-    expect(body.issue.relation_type).toBe('duplicates');
+    expect(body.relation.issue_to_id).toBe(400);
+    expect(body.relation.relation_type).toBe('duplicates');
     // Second call is the PUT to update the issue
     const updateCall = calls[1];
     expect(updateCall[0]).toContain('/issues/100.json');
@@ -181,9 +181,9 @@ describe('registerIssues', () => {
     expect(lastCall[0]).toContain('/issues/100/relations.json');
     expect((lastCall[1] as any).method).toBe('POST');
     const body = JSON.parse((lastCall[1] as any).body);
-    expect(body.issue.issue_to_id).toBe(200);
-    expect(body.issue.relation_type).toBe('blocks');
-    expect(body.issue.inverted).toBe(true);
+    expect(body.relation.issue_to_id).toBe(200);
+    expect(body.relation.relation_type).toBe('blocks');
+    expect(body.relation.inverted).toBe(true);
   });
 
   it('redmine_get_relations should return formatted relations', async () => {
@@ -214,7 +214,7 @@ describe('registerIssues', () => {
     const removeRelationCall = server.tool.mock.calls.find((call: any[]) => call[0] === 'redmine_remove_relation');
     const removeRelationHandler = removeRelationCall[3];
 
-    setupMockResponse('/issues/100/relations/5.json', {});
+    setupMockResponse('/relations/5.json', {});
 
     const result = await removeRelationHandler({ issue_id: 100, relation_id: 5 });
     expect(result.content[0].type).toBe('text');
@@ -223,7 +223,7 @@ describe('registerIssues', () => {
     const mockFn = globalThis.fetch as jest.Mock;
     const calls = mockFn.mock.calls;
     const lastCall = calls[calls.length - 1];
-    expect(lastCall[0]).toContain('/issues/100/relations/5.json');
+    expect(lastCall[0]).toContain('/relations/5.json');
     expect((lastCall[1] as any).method).toBe('DELETE');
   });
 });
