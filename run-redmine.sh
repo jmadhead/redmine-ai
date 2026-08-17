@@ -12,5 +12,5 @@ podman run -d \
     -v "$(pwd)/redmine/log:/usr/src/redmine/log" \
     -v "$(pwd)/redmine/tmp:/usr/src/redmine/tmp" \
     -v "$(pwd)/redmine/plugin_assets:/usr/src/redmine/public/plugin_assets" \
-    -v "$(pwd)/redmine/themes:/usr/src/redmine/public/themes" \
+    -v "$(pwd)/redmine/themes:/usr/src/redmine/themes" \
     local-redmine-ai

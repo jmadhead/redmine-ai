@@ -56,6 +56,13 @@ gosu postgres pg_ctl \
     -D "$PGDATA" \
     -w start
 
+# Gracefully stop PostgreSQL when the container receives SIGTERM/SIGINT
+stop_pg() {
+    echo "==> Stopping PostgreSQL..."
+    gosu postgres pg_ctl -D "$PGDATA" -w stop -m fast
+}
+trap stop_pg TERM INT
+
 echo "==> Configuring Redmine database..."
 
 cat > "${REDMINE_DIR}/config/database.yml" <<EOF

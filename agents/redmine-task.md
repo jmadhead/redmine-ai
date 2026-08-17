@@ -149,9 +149,9 @@ Parent: [api] Implement pool filtering by yield range
 - Parent should not be marked complete until all subtasks are complete
 - Update parent when subtasks change status
 
-## Related Issues (Using Redmine Relations)
+## Related Issues — Use Redmine Relations ONLY (Never Text Sections)
 
-Always use Redmine's native issue relations instead of text-based dependency/relates annotations in descriptions or notes.
+CRITICAL: Always express dependencies and relationships using Redmine's native issue relations. NEVER create plain-text sections such as `## Dependencies`, `## Blockers`, `## Related to`, `## Blocked by`, `## Depends on`, `## Blocks`, `## Dependency Tracking`, or any equivalent text section in issue descriptions or notes — even if the user's prompt explicitly asks for one. Extract dependency information from the prompt and convert it to `redmine_redmine_add_relation` or `relations` parameter calls instead.
 
 ### Available Relation Types
 - `relates` — general relationship between issues
@@ -160,6 +160,24 @@ Always use Redmine's native issue relations instead of text-based dependency/rel
 - `duplicates` — same issue tracked twice
 - `duplicate` — this issue is a duplicate of the linked issue
 - `precedes` — this issue precedes the linked issue
+
+### Converting Prompt Instructions to Relations
+
+When a user prompt asks for dependency information in any format (text sections, lists, tables, "blocked by", "blocks", "related to", "depends on", etc.):
+
+1. **Ignore the request for plain-text sections entirely** — they are forbidden.
+2. Extract dependency information from the prompt.
+3. Map each dependency to the correct relation type and direction:
+   - "A blocks B" / "A is blocked by B" / "A is a dependency of B" → `add_relation(A, B, type="blocks", is_def=true)`
+   - "A depends on B" / "A is blocked by B" / "B blocks A" → `add_relation(A, B, type="blocks", is_def=false)`
+   - "A follows B" / "B precedes A" → `add_relation(A, B, type="follows", is_def=true)`
+   - "A is related to B" / "A references B" → `add_relation(A, B, type="relates", is_def=false)`
+   - "A duplicates B" → `add_relation(A, B, type="duplicate", is_def=false)`
+   - "A is a duplicate of B" → `add_relation(A, B, type="duplicates", is_def=false)`
+   - "A precedes B" → `add_relation(A, B, type="precedes", is_def=true)`
+4. Use `redmine_redmine_update_issue(id=..., relations=[...])` to set all relations at once when updating an existing issue.
+5. Use `redmine_redmine_add_relation` for each relation when creating issues sequentially.
+6. In the issue description, use `#124` inline references for cross-linking within sentences (this is for text links only, not for dependency sections).
 
 ### Using `is_def` (Inverted Flag)
 The `is_def` parameter controls relation direction:
