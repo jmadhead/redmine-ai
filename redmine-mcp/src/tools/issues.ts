@@ -105,6 +105,12 @@ export function registerIssues(server: McpServer, client: RedmineClient) {
     },
     async ({ id }) => {
       const issue = await client.getIssue(id);
+      const children = (issue.children || []).map((c: any) => ({
+        id: c.id,
+        subject: c.subject,
+        status: c.status?.name ?? c.status,
+        tracker: c.tracker?.name ?? c.tracker,
+      }));
       return {
         content: [
           {
@@ -128,6 +134,55 @@ export function registerIssues(server: McpServer, client: RedmineClient) {
                 relations: issue.relations,
                 notes: issue.journals?.map((j: any) => j.notes).join("\n") ?? "",
                 custom_fields: issue.custom_fields,
+                children,
+              },
+              null,
+              2
+            ),
+          },
+        ],
+      };
+    }
+  );
+
+  server.tool(
+    "redmine_get_issue_children",
+    "Get the child issues (subtasks) of a Redmine issue. Returns issues listed in the 'children' field of /issues/{id}.json?include=children response.",
+    {
+      id: z
+        .number()
+        .int()
+        .positive()
+        .describe("Parent issue ID"),
+    },
+    async ({ id }) => {
+      const issue = await client.getIssue(id);
+      const children = (issue.children || []).map((c: any) => ({
+        id: c.id,
+        project: c.project?.name ?? c.project,
+        tracker: c.tracker?.name ?? c.tracker,
+        status: c.status?.name ?? c.status,
+        subject: c.subject,
+        priority: c.priority?.name ?? c.priority,
+        assignee: c.assigned_to?.name ?? c.assigned_to,
+        author: c.author?.name ?? c.author,
+        description: c.description,
+        start_date: c.start_date,
+        due_date: c.due_date,
+        done_ratio: c.done_ratio,
+        created_on: c.created_on,
+        updated_on: c.updated_on,
+        custom_fields: c.custom_fields,
+      }));
+      return {
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify(
+              {
+                issue_id: id,
+                children,
+                total: children.length,
               },
               null,
               2
@@ -321,17 +376,37 @@ export function registerIssues(server: McpServer, client: RedmineClient) {
           addedRelations.push({
             issue_to_id: r.issue_to_id,
             relation_type: r.type,
-            relation_id: result.relation?.id ?? result.id,
+            relation_id: result?.relation?.id ?? result?.id,
           });
         }
       }
-      const result = await client.updateIssue(id, payload as Record<string, unknown>);
-      const data = result ? {
-        id: result.id,
-        subject: result.subject,
-        status: result.status?.name ?? result.status,
-        url: `${client.url}/issues/${result.id}`,
-      } : { id, message: "Issue updated successfully (empty response from server)" };
+      let result: any;
+      try {
+        result = await client.updateIssue(id, payload as Record<string, unknown>);
+      } catch (e) {
+        result = null;
+      }
+      let data: any;
+      if (result && result.id) {
+        data = {
+          id: result.id,
+          subject: result.subject,
+          status: result.status?.name ?? result.status,
+          url: `${client.url}/issues/${result.id}`,
+        };
+      } else {
+        try {
+          const refreshed = await client.getIssue(id);
+          data = {
+            id: refreshed.id,
+            subject: refreshed.subject,
+            status: refreshed.status?.name ?? refreshed.status,
+            url: `${client.url}/issues/${refreshed.id}`,
+          };
+        } catch {
+          data = { id, message: "Issue updated successfully (empty response from server)" };
+        }
+      }
       if (addedRelations.length > 0) {
         (data as any).relations_added = addedRelations;
       }
@@ -383,10 +458,10 @@ export function registerIssues(server: McpServer, client: RedmineClient) {
       const relations = await client.getIssueRelations(issue_id);
       const formatted = (relations || []).map((r: any) => ({
         id: r.id,
-        issue_to_id: r.issue_to?.id ?? r.issue_to_id,
-        issue_to_subject: r.issue_to?.subject ?? r.issue_to_subject,
-        type: r.type,
-        is_def: r.is_def,
+        issue_to_id: r.issue_to_id ?? r.issue_to?.id,
+        issue_to_subject: r.issue_to?.subject ?? null,
+        type: r.relation_type ?? r.type,
+        is_def: r.is_def ?? false,
       }));
       return {
         content: [

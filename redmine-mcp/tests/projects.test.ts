@@ -2,7 +2,7 @@ import { registerProjects } from '../src/tools/projects';
 import { projectFixture } from './fixtures';
 import { setupMockResponse } from './helpers/make-fetch-mock';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { RedmineClient } from '../src/redmine';
+import { RedmineClient, fetchImpl } from '../src/redmine';
 
 function createMockServer() {
   return {
@@ -95,13 +95,44 @@ describe('registerProjects', () => {
     expect(parsed.identifier).toBe('new-project');
   });
 
-  it('redmine_update_project should update project and return result', async () => {
+  it('redmine_update_project should update project and return result (handles 204)', async () => {
+    let callCount = 0;
+    const mockFn = fetchImpl.fn as jest.Mock;
+    mockFn.mockImplementation((_url: any, options: any) => {
+      callCount++;
+      const method = options?.method ?? 'GET';
+      const urlStr = typeof _url === 'string' ? _url : String(_url);
+      if (urlStr.includes('/projects/updated.json')) {
+        if (method === 'PUT') {
+          return Promise.resolve({
+            ok: true,
+            status: 204,
+            headers: new Headers(),
+            json: () => Promise.resolve(null),
+            text: () => Promise.resolve(''),
+          } as unknown as Response);
+        }
+        const updated = projectFixture({ id: 1, name: 'Updated', identifier: 'updated' });
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'Content-Type': 'application/json' }),
+          json: () => Promise.resolve({ project: updated }),
+          text: () => Promise.resolve(JSON.stringify({ project: updated })),
+        } as unknown as Response);
+      }
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        headers: new Headers(),
+        json: () => Promise.reject(new Error('Not Found')),
+        text: () => Promise.reject(new Error('Not Found')),
+      } as unknown as Response);
+    });
+
     registerProjects(server, client);
     const updateProjectCall = server.tool.mock.calls.find((call: any[]) => call[0] === 'redmine_update_project');
     const updateProjectHandler = updateProjectCall[3];
-
-    const updated = projectFixture({ id: 1, name: 'Updated', identifier: 'updated' });
-    setupMockResponse('/projects/updated.json', { project: updated });
 
     const result = await updateProjectHandler({
       identifier: 'updated',
@@ -118,5 +149,6 @@ describe('registerProjects', () => {
     expect(parsed.name).toBe('Updated');
     expect(parsed.id).toBe(1);
     expect(parsed.identifier).toBe('updated');
+    expect(callCount).toBe(2);
   });
 });

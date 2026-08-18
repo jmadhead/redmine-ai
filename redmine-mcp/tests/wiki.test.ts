@@ -1,7 +1,7 @@
 import { registerWiki } from '../src/tools/wiki';
 import { setupMockResponse } from './helpers/make-fetch-mock';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { RedmineClient } from '../src/redmine';
+import { RedmineClient, fetchImpl } from '../src/redmine';
 
 function createMockServer() {
   return {
@@ -100,20 +100,55 @@ describe('registerWiki', () => {
     expect(parsed.author.name).toBe('John Doe');
   });
 
-  it('redmine_update_wiki_page should create or update a wiki page', async () => {
+  it('redmine_update_wiki_page should create or update a wiki page (handles 204)', async () => {
+    let callCount = 0;
+    const mockFn = fetchImpl.fn as jest.Mock;
+    mockFn.mockImplementation((_url: any, options: any) => {
+      callCount++;
+      const method = options?.method ?? 'GET';
+      const urlStr = typeof _url === 'string' ? _url : String(_url);
+      if (urlStr.includes('/projects/test-project/wiki/Updated')) {
+        if (method === 'PUT') {
+          return Promise.resolve({
+            ok: true,
+            status: 204,
+            headers: new Headers(),
+            json: () => Promise.resolve(null),
+            text: () => Promise.resolve(''),
+          } as unknown as Response);
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'Content-Type': 'application/json' }),
+          json: () => Promise.resolve({
+            wiki_page: {
+              title: 'Updated Page',
+              version: 2,
+              comments: 'Updated content',
+            },
+          }),
+          text: () => Promise.resolve(JSON.stringify({
+            wiki_page: {
+              title: 'Updated Page',
+              version: 2,
+              comments: 'Updated content',
+            },
+          })),
+        } as unknown as Response);
+      }
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        headers: new Headers(),
+        json: () => Promise.reject(new Error('Not Found')),
+        text: () => Promise.reject(new Error('Not Found')),
+      } as unknown as Response);
+    });
+
     registerWiki(server, client);
     const updateCall = server.tool.mock.calls.find((call: any[]) => call[0] === 'redmine_update_wiki_page');
     const updateHandler = updateCall[3];
-
-    const result = {
-      wiki_page: {
-        title: 'Updated Page',
-        version: 2,
-        comments: 'Updated content',
-      },
-      title: 'Updated Page',
-    };
-    setupMockResponse('/projects/test-project/wiki/Updated%20Page.json', result);
 
     const response = await updateHandler({
       project_id: 'test-project',
@@ -126,6 +161,7 @@ describe('registerWiki', () => {
     expect(parsed.title).toBe('Updated Page');
     expect(parsed.version).toBe(2);
     expect(parsed.url).toContain('Updated%20Page');
+    expect(callCount).toBe(2);
   });
 
   it('redmine_delete_wiki_page should delete a wiki page', async () => {

@@ -23,8 +23,8 @@ export function setupMockResponse(
   headers: Record<string, string> = { 'Content-Type': 'application/json' },
 ) {
   const mockFn = globalThis.fetch as unknown as Mock;
-  mockFn.mockImplementation((args: unknown) => {
-    const urlStr = typeof args === 'string' ? args : String(args);
+  mockFn.mockImplementation((url: unknown, _options: unknown) => {
+    const urlStr = typeof url === 'string' ? url : String(url);
     const matches = typeof urlPattern === 'string'
       ? urlStr.includes(urlPattern)
       : urlPattern.test(urlStr);
@@ -36,7 +36,7 @@ export function setupMockResponse(
         headers: new Headers(headers),
         json: () => Promise.resolve(response),
         text: () => Promise.resolve(JSON.stringify(response)),
-      });
+      } as unknown as Response);
     }
 
     // Return 404 for unmatched URLs
@@ -46,6 +46,6 @@ export function setupMockResponse(
       headers: new Headers(),
       json: () => Promise.reject(new Error('Not Found')),
       text: () => Promise.reject(new Error('Not Found')),
-    });
+    } as unknown as Response);
   });
 }

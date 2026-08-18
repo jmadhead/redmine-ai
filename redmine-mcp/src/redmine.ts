@@ -24,6 +24,8 @@ export type RedmineIssueStatus = Record<string, any>;
 export type RedmineTracker = Record<string, any>;
 export type RedmineIssueCategory = Record<string, any>;
 
+export const fetchImpl: { fn: typeof fetch } = { fn: globalThis.fetch.bind(globalThis) };
+
 function buildUrl(config: RedmineConfig, path: string): string {
   const base = config.url.replace(/\/+$/, "");
   return `${base}${path}`;
@@ -61,7 +63,8 @@ async function redmineRequest<T>(
     options.body = JSON.stringify({ [bodyKey]: body });
   }
 
-  const response = await fetch(url, options);
+  console.log('[REDMINE] redmineRequest:', method, path);
+  const response = await fetchImpl.fn(url, options);
 
   if (!response.ok) {
     const errorText = await response.text().catch(() => "");
@@ -141,7 +144,7 @@ export class RedmineClient {
   async getIssue(id: number): Promise<RedmineIssue> {
     const response = await redmineRequest<{ issue: RedmineIssue }>(
       this.config,
-      `/issues/${id}.json`
+      `/issues/${id}.json?include=children`
     );
     return response.issue;
   }
@@ -198,7 +201,7 @@ export class RedmineClient {
       "X-Redmine-API-Key": config.apiKey,
     };
     const body = { relation };
-    const response = await fetch(url, {
+    const response = await fetchImpl.fn(url, {
       method: "POST",
       headers,
       body: JSON.stringify(body),

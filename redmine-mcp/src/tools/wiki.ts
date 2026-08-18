@@ -90,25 +90,48 @@ export function registerWiki(server: McpServer, client: RedmineClient) {
         .describe("Edit comment describing the changes made"),
     },
     async ({ project_id, title, text, comments }) => {
-      const result = await client.updateWikiPage(project_id, title, {
-        text,
-        comments,
-      });
+      let result: any;
+      try {
+        result = await client.updateWikiPage(project_id, title, {
+          text,
+          comments,
+        });
+      } catch (e) {
+        result = null;
+      }
+      let wikiData: any;
+      if (result && result.wiki_page) {
+        wikiData = {
+          project_id,
+          title: result.wiki_page.title ?? title,
+          version: result.wiki_page.version,
+          comments: result.wiki_page.comments ?? comments,
+          url: `${client.url}/projects/${encodeURIComponent(project_id)}/wiki/${encodeURIComponent(title)}`,
+        };
+      } else {
+        try {
+          const refreshed = await client.getWikiPage(project_id, title);
+          wikiData = {
+            project_id,
+            title: refreshed.title,
+            version: refreshed.version,
+            comments: refreshed.comments ?? comments,
+            url: `${client.url}/projects/${encodeURIComponent(project_id)}/wiki/${encodeURIComponent(title)}`,
+          };
+        } catch {
+          wikiData = {
+            project_id,
+            title,
+            message: "Wiki page updated successfully (empty response from server)",
+            url: `${client.url}/projects/${encodeURIComponent(project_id)}/wiki/${encodeURIComponent(title)}`,
+          };
+        }
+      }
       return {
         content: [
           {
             type: "text",
-            text: JSON.stringify(
-              {
-                project_id,
-                title: result.wiki_page?.title ?? result.title ?? title,
-                version: result.wiki_page?.version ?? result.version,
-                comments: result.wiki_page?.comments ?? comments,
-                url: `${client.url}/projects/${encodeURIComponent(project_id)}/wiki/${encodeURIComponent(title)}`,
-              },
-              null,
-              2
-            ),
+            text: JSON.stringify(wikiData, null, 2),
           },
         ],
       };

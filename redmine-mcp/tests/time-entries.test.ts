@@ -2,7 +2,7 @@ import { registerTimeEntries } from '../src/tools/time-entries';
 import { timeEntryFixture } from './fixtures';
 import { setupMockResponse } from './helpers/make-fetch-mock';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { RedmineClient } from '../src/redmine';
+import { RedmineClient, fetchImpl } from '../src/redmine';
 
 function createMockServer() {
   return {
@@ -66,7 +66,7 @@ describe('registerTimeEntries', () => {
     });
 
     await listEntriesHandler({ offset: 0, limit: 25, user_id: '1' });
-    const mockFn = globalThis.fetch as jest.Mock;
+    const mockFn = fetchImpl.fn as jest.Mock;
     const calls = mockFn.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     expect(calls[0][0]).toContain('user_id=1');
@@ -86,7 +86,7 @@ describe('registerTimeEntries', () => {
     });
 
     await listEntriesHandler({ offset: 0, limit: 25, from: '2024-01-01', to: '2024-01-31' });
-    const mockFn = globalThis.fetch as jest.Mock;
+    const mockFn = fetchImpl.fn as jest.Mock;
     const calls = mockFn.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     const url = calls[0][0] as string;
@@ -128,7 +128,7 @@ describe('registerTimeEntries', () => {
     expect(result.content[0].text).toContain('2');
 
     // Verify the request body included activity_id
-    const mockFn = globalThis.fetch as jest.Mock;
+    const mockFn = fetchImpl.fn as jest.Mock;
     const calls = mockFn.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     const requestBody = JSON.parse((calls[0][1] as any).body);
@@ -141,8 +141,8 @@ describe('registerTimeEntries', () => {
     const deleteHandler = deleteCall[3];
 
     // Mock a 404 response for the delete request
-    const mockFn = globalThis.fetch as jest.Mock;
-    mockFn.mockImplementation(() =>
+    const mockFn = fetchImpl.fn as jest.Mock;
+    mockFn.mockImplementation((_url: any, _options: any) =>
       Promise.resolve({
         ok: false,
         status: 404,
@@ -150,13 +150,65 @@ describe('registerTimeEntries', () => {
         headers: new Headers(),
         json: () => Promise.reject(new Error('Not Found')),
         text: () => Promise.resolve(''),
-      })
+      } as unknown as Response)
     );
 
     const result = await deleteHandler({ id: 9999 });
     expect(result.content[0].type).toBe('text');
     expect(result.content[0].text).toContain('Error deleting time entry #9999');
     expect(result.content[0].text).toContain('404');
+  });
+
+  it('redmine_update_time_entry should update time entry and return result (handles 204)', async () => {
+    let callCount = 0;
+    const mockFn = fetchImpl.fn as jest.Mock;
+    mockFn.mockImplementation((_url: any, options: any) => {
+      callCount++;
+      const method = options?.method ?? 'GET';
+      const urlStr = typeof _url === 'string' ? _url : String(_url);
+      if (urlStr.includes('/time_entries/1001.json')) {
+        if (method === 'PUT') {
+          return Promise.resolve({
+            ok: true,
+            status: 204,
+            headers: new Headers(),
+            json: () => Promise.resolve(null),
+            text: () => Promise.resolve(''),
+          } as unknown as Response);
+        }
+        const entry = timeEntryFixture({ id: 1001, hours: 4.0, comment: 'Updated comment' });
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          headers: new Headers({ 'Content-Type': 'application/json' }),
+          json: () => Promise.resolve(entry),
+          text: () => Promise.resolve(JSON.stringify(entry)),
+        } as unknown as Response);
+      }
+      return Promise.resolve({
+        ok: false,
+        status: 404,
+        headers: new Headers(),
+        json: () => Promise.reject(new Error('Not Found')),
+        text: () => Promise.reject(new Error('Not Found')),
+      } as unknown as Response);
+    });
+
+    registerTimeEntries(server, client);
+    const updateTimeEntryCall = server.tool.mock.calls.find((call: any[]) => call[0] === 'redmine_update_time_entry');
+    const updateTimeEntryHandler = updateTimeEntryCall[3];
+
+    const result = await updateTimeEntryHandler({
+      id: 1001,
+      hours: 4.0,
+      comment: 'Updated comment',
+    });
+
+    expect(result.content[0].type).toBe('text');
+    expect(result.content[0].text).toContain('Time entry #1001 updated successfully');
+    expect(result.content[0].text).toContain('4');
+    expect(result.content[0].text).toContain('Updated comment');
+    expect(callCount).toBe(2);
   });
 
   it('redmine_create_time_entry should require issue_id or project_id', async () => {

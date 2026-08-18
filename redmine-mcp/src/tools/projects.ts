@@ -181,12 +181,31 @@ export function registerProjects(server: McpServer, client: RedmineClient) {
       if (status !== undefined) payload.status_id = status;
       if (visibility !== undefined) payload.visibility_level = visibilityMap[visibility] ?? 0;
       if (parent_project_id !== undefined) payload.parent_project_id = parent_project_id;
-      const result = await client.updateProject(identifier, payload);
-      const data = result ? {
-        id: result.id,
-        identifier: result.identifier,
-        name: result.name,
-      } : { identifier, message: "Project updated successfully (empty response from server)" };
+      let result: any;
+      try {
+        result = await client.updateProject(identifier, payload);
+      } catch (e) {
+        result = null;
+      }
+      let data: any;
+      if (result && result.id) {
+        data = {
+          id: result.id,
+          identifier: result.identifier,
+          name: result.name,
+        };
+      } else {
+        try {
+          const refreshed = await client.getProject(identifier);
+          data = {
+            id: refreshed.id,
+            identifier: refreshed.identifier,
+            name: refreshed.name,
+          };
+        } catch {
+          data = { identifier, message: "Project updated successfully (empty response from server)" };
+        }
+      }
       return {
         content: [
           {

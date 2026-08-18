@@ -2,7 +2,7 @@ import { registerIssues } from '../src/tools/issues';
 import { issueFixture, relationFixture } from './fixtures';
 import { setupMockResponse } from './helpers/make-fetch-mock';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { RedmineClient } from '../src/redmine';
+import { RedmineClient, fetchImpl } from '../src/redmine';
 
 function createMockServer() {
   return {
@@ -20,13 +20,15 @@ describe('registerIssues', () => {
       url: 'http://test-redmine.example.com',
       apiKey: 'test-api-key',
     });
+    (fetchImpl.fn as jest.Mock).mockClear();
   });
 
-  it('should register 8 issue tools', () => {
+  it('should register 9 issue tools', () => {
     registerIssues(server, client);
-    expect(server.tool).toHaveBeenCalledTimes(8);
+    expect(server.tool).toHaveBeenCalledTimes(9);
     expect(server.tool).toHaveBeenCalledWith('redmine_list_issues', expect.any(String), expect.any(Object), expect.any(Function));
     expect(server.tool).toHaveBeenCalledWith('redmine_get_issue', expect.any(String), expect.any(Object), expect.any(Function));
+    expect(server.tool).toHaveBeenCalledWith('redmine_get_issue_children', expect.any(String), expect.any(Object), expect.any(Function));
     expect(server.tool).toHaveBeenCalledWith('redmine_create_issue', expect.any(String), expect.any(Object), expect.any(Function));
     expect(server.tool).toHaveBeenCalledWith('redmine_update_issue', expect.any(String), expect.any(Object), expect.any(Function));
     expect(server.tool).toHaveBeenCalledWith('redmine_delete_issue', expect.any(String), expect.any(Object), expect.any(Function));
@@ -95,17 +97,19 @@ describe('registerIssues', () => {
     const updateIssueCall = server.tool.mock.calls.find((call: any[]) => call[0] === 'redmine_update_issue');
     const updateIssueHandler = updateIssueCall[3];
 
-    const mockFn = globalThis.fetch as jest.Mock;
-    mockFn.mockImplementation((args: any) => {
-      const urlStr = typeof args === 'string' ? args : String(args);
-      if (urlStr.includes('/issues/100/relations.json')) {
+    let callCount = 0;
+    const mockFn = fetchImpl.fn as jest.Mock;
+    mockFn.mockImplementation((_url: any, options: any) => {
+      callCount++;
+      const method = options?.method ?? 'GET';
+      if (callCount === 1 && method === 'POST') {
         return Promise.resolve({
           ok: true,
           status: 201,
           headers: new Headers({ 'Content-Type': 'application/json' }),
           json: () => Promise.resolve({ relation: { id: 10, issue_id: 100, issue_to_id: 400, relation_type: 'duplicates' } }),
           text: () => Promise.resolve(JSON.stringify({ relation: { id: 10, issue_id: 100, issue_to_id: 400, relation_type: 'duplicates' } })),
-        });
+        } as unknown as Response);
       }
       return Promise.resolve({
         ok: true,
@@ -113,7 +117,7 @@ describe('registerIssues', () => {
         headers: new Headers({ 'Content-Type': 'application/json' }),
         json: () => Promise.resolve({ issue: { id: 100, subject: 'Updated', status: { name: 'In Progress' } } }),
         text: () => Promise.resolve(JSON.stringify({ issue: { id: 100, subject: 'Updated', status: { name: 'In Progress' } } })),
-      });
+      } as unknown as Response);
     });
 
     await updateIssueHandler({
@@ -141,17 +145,17 @@ describe('registerIssues', () => {
     const addRelationCall = server.tool.mock.calls.find((call: any[]) => call[0] === 'redmine_add_relation');
     const addRelationHandler = addRelationCall[3];
 
-    const mockFn = globalThis.fetch as jest.Mock;
-    mockFn.mockImplementation((args: any) => {
-      const urlStr = typeof args === 'string' ? args : String(args);
-      if (urlStr.includes('/issues/100/relations.json')) {
+    const mockFn = fetchImpl.fn as jest.Mock;
+    mockFn.mockImplementation((_url: any, options: any) => {
+      const method = options?.method ?? 'GET';
+      if (method === 'POST') {
         return Promise.resolve({
           ok: true,
           status: 201,
           headers: new Headers({ 'Content-Type': 'application/json' }),
           json: () => Promise.resolve({ relation: { id: 5, issue_id: 100, issue_to_id: 200, relation_type: 'blocks' } }),
           text: () => Promise.resolve(JSON.stringify({ relation: { id: 5, issue_id: 100, issue_to_id: 200, relation_type: 'blocks' } })),
-        });
+        } as unknown as Response);
       }
       return Promise.resolve({
         ok: false,
@@ -159,7 +163,7 @@ describe('registerIssues', () => {
         headers: new Headers(),
         json: () => Promise.reject(new Error('Not Found')),
         text: () => Promise.reject(new Error('Not Found')),
-      });
+      } as unknown as Response);
     });
 
     const result = await addRelationHandler({
@@ -192,8 +196,8 @@ describe('registerIssues', () => {
     const getRelationsHandler = getRelationsCall[3];
 
     const relations = [
-      relationFixture({ id: 1, issue_to: { id: 200, subject: 'Related Issue' }, type: 'relates', is_def: false }),
-      relationFixture({ id: 2, issue_to: { id: 300, subject: 'Blocked Issue' }, type: 'blocks', is_def: true }),
+      relationFixture({ id: 1, issue_to_id: 200, issue_to_subject: 'Related Issue', relation_type: 'relates', is_def: false }),
+      relationFixture({ id: 2, issue_to_id: 300, issue_to_subject: 'Blocked Issue', relation_type: 'blocks', is_def: true }),
     ];
     setupMockResponse('/issues/100/relations.json', { relations });
 
@@ -220,7 +224,7 @@ describe('registerIssues', () => {
     expect(result.content[0].type).toBe('text');
     expect(result.content[0].text).toContain('Relation #5 removed from issue #100');
 
-    const mockFn = globalThis.fetch as jest.Mock;
+    const mockFn = fetchImpl.fn as jest.Mock;
     const calls = mockFn.mock.calls;
     const lastCall = calls[calls.length - 1];
     expect(lastCall[0]).toContain('/relations/5.json');

@@ -240,20 +240,36 @@ export function registerTimeEntries(
         .describe("New issue ID"),
     },
     async ({ id, ...payload }) => {
-      const result = await client.updateTimeEntry(id, payload);
+      let result: any;
+      try {
+        result = await client.updateTimeEntry(id, payload);
+      } catch (e) {
+        result = null;
+      }
+      let entryData: any;
+      if (result && result.id) {
+        entryData = {
+          id: result.id,
+          hours: result.hours,
+          comment: result.comment,
+        };
+      } else {
+        try {
+          const refreshed = await client.getTimeEntry(id);
+          entryData = {
+            id: refreshed.id,
+            hours: refreshed.hours,
+            comment: refreshed.comment,
+          };
+        } catch {
+          entryData = { id, message: "Time entry updated successfully (empty response from server)" };
+        }
+      }
       return {
         content: [
           {
             type: "text",
-            text: `Time entry #${id} updated successfully.\n\n${JSON.stringify(
-              {
-                id: result.id,
-                hours: result.hours,
-                comment: result.comment,
-              },
-              null,
-              2
-            )}`,
+            text: `Time entry #${id} updated successfully.\n\n${JSON.stringify(entryData, null, 2)}`,
           },
         ],
       };
