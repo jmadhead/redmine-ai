@@ -2,7 +2,12 @@ import { z } from "zod";
 import { RedmineClient } from "../redmine.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-export function registerUsers(server: McpServer, client: RedmineClient) {
+type WrapHandler = (
+  toolName: string,
+  handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>
+) => (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>;
+
+export function registerUsers(server: McpServer, client: RedmineClient, wrapHandler?: WrapHandler) {
   server.tool(
     "redmine_get_user",
     "Get a single Redmine user by ID. Returns full user details including groups and roles.",

@@ -2,7 +2,12 @@ import { z } from "zod";
 import { RedmineClient } from "../redmine.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
-export function registerIssues(server: McpServer, client: RedmineClient) {
+type WrapHandler = (
+  toolName: string,
+  handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>
+) => (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>;
+
+export function registerIssues(server: McpServer, client: RedmineClient, wrapHandler?: WrapHandler) {
   server.tool(
     "redmine_list_issues",
     "List Redmine issues with optional filtering. Returns issues with id, project, tracker, status, subject, priority, assignee, relations, and more.",

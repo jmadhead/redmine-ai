@@ -1,9 +1,28 @@
 import { z } from "zod";
-import { RedmineClient } from "../redmine.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { RedmineClient } from "../redmine.js";
 
-export function registerProjects(server: McpServer, client: RedmineClient) {
-  server.tool(
+type WrapHandler = (
+  toolName: string,
+  handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>
+) => (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>;
+
+export function registerProjects(
+  server: McpServer,
+  client: RedmineClient,
+  wrapHandler?: WrapHandler
+) {
+  const tool = (
+    name: string,
+    description: string,
+    schema: z.ZodRawShape,
+    handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>,
+  ) => {
+    const effectiveHandler = wrapHandler ? wrapHandler(name, handler) : handler;
+    server.tool(name, description, schema, effectiveHandler as any);
+  };
+
+  tool(
     "redmine_list_projects",
     "List all Redmine projects. Returns a paginated list of projects with their identifiers, names, and status.",
     {
@@ -21,8 +40,8 @@ export function registerProjects(server: McpServer, client: RedmineClient) {
         .default(25)
         .describe("Number of items to return"),
     },
-    async ({ offset, limit }) => {
-      const result = await client.getProjects(offset, limit);
+    async (args: any) => {
+      const result = await client.getProjects(args.offset, args.limit);
       const projects = result.data.map((p) => ({
         id: p.id,
         identifier: p.identifier,
@@ -52,10 +71,10 @@ export function registerProjects(server: McpServer, client: RedmineClient) {
           },
         ],
       };
-    }
+    },
   );
 
-  server.tool(
+  tool(
     "redmine_get_project",
     "Get a single Redmine project by its identifier or numeric ID. Returns full project details.",
     {
@@ -63,8 +82,8 @@ export function registerProjects(server: McpServer, client: RedmineClient) {
         .string()
         .describe("Project identifier (string) or numeric ID"),
     },
-    async ({ identifier }) => {
-      const project = await client.getProject(identifier);
+    async (args: any) => {
+      const project = await client.getProject(args.identifier);
       const formatted = {
         id: project.id,
         identifier: project.identifier,
@@ -83,10 +102,10 @@ export function registerProjects(server: McpServer, client: RedmineClient) {
           },
         ],
       };
-    }
+    },
   );
 
-  server.tool(
+  tool(
     "redmine_create_project",
     "Create a new Redmine project. Requires at minimum a 'name' field. Optionally set identifier, description, status, visibility, parent_project_id, and custom_fields.",
     {
@@ -118,14 +137,14 @@ export function registerProjects(server: McpServer, client: RedmineClient) {
         .optional()
         .describe("Parent project ID for sub-projects"),
     },
-    async ({ name, identifier, description, status, visibility, parent_project_id }) => {
+    async (args: any) => {
       const visibilityMap: Record<string, number> = { public: 2, internal: 1, restricted: 0 };
-      const payload: Record<string, unknown> = { name };
-      if (identifier !== undefined) payload.identifier = identifier;
-      if (description !== undefined) payload.description = description;
-      if (status !== undefined) payload.status_id = status;
-      if (visibility !== undefined) payload.visibility_level = visibilityMap[visibility] ?? 0;
-      if (parent_project_id !== undefined) payload.parent_project_id = parent_project_id;
+      const payload: Record<string, unknown> = { name: args.name };
+      if (args.identifier !== undefined) payload.identifier = args.identifier;
+      if (args.description !== undefined) payload.description = args.description;
+      if (args.status !== undefined) payload.status_id = args.status;
+      if (args.visibility !== undefined) payload.visibility_level = visibilityMap[args.visibility] ?? 0;
+      if (args.parent_project_id !== undefined) payload.parent_project_id = args.parent_project_id;
 
       const result = await client.createProject(payload);
       return {
@@ -140,10 +159,10 @@ export function registerProjects(server: McpServer, client: RedmineClient) {
           },
         ],
       };
-    }
+    },
   );
 
-  server.tool(
+  tool(
     "redmine_update_project",
     "Update an existing Redmine project. Provide the project identifier and any fields to update.",
     {
@@ -173,17 +192,17 @@ export function registerProjects(server: McpServer, client: RedmineClient) {
         .optional()
         .describe("New parent project ID (omit to keep current)"),
     },
-    async ({ identifier, name, description, status, visibility, parent_project_id }) => {
+    async (args: any) => {
       const visibilityMap: Record<string, number> = { public: 2, internal: 1, restricted: 0 };
       const payload: Record<string, unknown> = {};
-      if (name !== undefined) payload.name = name;
-      if (description !== undefined) payload.description = description;
-      if (status !== undefined) payload.status_id = status;
-      if (visibility !== undefined) payload.visibility_level = visibilityMap[visibility] ?? 0;
-      if (parent_project_id !== undefined) payload.parent_project_id = parent_project_id;
+      if (args.name !== undefined) payload.name = args.name;
+      if (args.description !== undefined) payload.description = args.description;
+      if (args.status !== undefined) payload.status_id = args.status;
+      if (args.visibility !== undefined) payload.visibility_level = visibilityMap[args.visibility] ?? 0;
+      if (args.parent_project_id !== undefined) payload.parent_project_id = args.parent_project_id;
       let result: any;
       try {
-        result = await client.updateProject(identifier, payload);
+        result = await client.updateProject(args.identifier, payload);
       } catch (e) {
         result = null;
       }
@@ -196,24 +215,24 @@ export function registerProjects(server: McpServer, client: RedmineClient) {
         };
       } else {
         try {
-          const refreshed = await client.getProject(identifier);
+          const refreshed = await client.getProject(args.identifier);
           data = {
             id: refreshed.id,
             identifier: refreshed.identifier,
             name: refreshed.name,
           };
         } catch {
-          data = { identifier, message: "Project updated successfully (empty response from server)" };
+          data = { identifier: args.identifier, message: "Project updated successfully (empty response from server)" };
         }
       }
       return {
         content: [
           {
             type: "text",
-            text: `Project "${identifier}" updated successfully.\n\n${JSON.stringify(data, null, 2)}`,
+            text: `Project "${args.identifier}" updated successfully.\n\n${JSON.stringify(data, null, 2)}`,
           },
         ],
       };
-    }
+    },
   );
 }

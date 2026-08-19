@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { RedmineClient } from "./redmine.js";
+import { logger } from "./logger.js";
 import { registerProjects } from "./tools/projects.js";
 import { registerIssues } from "./tools/issues.js";
 import { registerUsers } from "./tools/users.js";
@@ -24,6 +25,34 @@ function getRedmineConfig(): { url: string; apiKey: string } {
   return { url, apiKey };
 }
 
+function loggedHandler(
+  toolName: string,
+  handler: (args: Record<string, unknown>) => Promise<{ content: Array<{ type: string; text: string }> }>
+): typeof handler {
+  return async (args: Record<string, unknown>) => {
+    logger.toolCall(toolName, args);
+    const start = Date.now();
+    try {
+      const result = await handler(args);
+      const duration = Date.now() - start;
+      const output = result.content?.[0]?.text ?? JSON.stringify(result.content);
+      logger.toolResult(toolName, duration, output);
+      return result;
+    } catch (err) {
+      const duration = Date.now() - start;
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      logger.toolError(toolName, duration, errorMessage);
+      throw err;
+    }
+  };
+}
+
+type RegisterFn = (
+  server: McpServer,
+  client: RedmineClient,
+  wrapHandler: typeof loggedHandler
+) => void;
+
 async function main() {
   const config = getRedmineConfig();
 
@@ -34,21 +63,21 @@ async function main() {
 
   const client = new RedmineClient(config);
 
-  registerProjects(server, client);
-  registerIssues(server, client);
-  registerUsers(server, client);
-  registerTimeEntries(server, client);
-  registerTracking(server, client);
-  registerContext(server, client);
-  registerWiki(server, client);
+  registerProjects(server, client, loggedHandler);
+  registerIssues(server, client, loggedHandler);
+  registerUsers(server, client, loggedHandler);
+  registerTimeEntries(server, client, loggedHandler);
+  registerTracking(server, client, loggedHandler);
+  registerContext(server, client, loggedHandler);
+  registerWiki(server, client, loggedHandler);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  console.error("Redmine MCP server running on stdio");
+  logger.info("Redmine MCP server running on stdio");
 }
 
 main().catch((err) => {
-  console.error("Failed to start Redmine MCP server:", err.message);
+  logger.error("Failed to start Redmine MCP server: " + err.message);
   process.exit(1);
 });

@@ -1,5 +1,5 @@
 ---
-description: Reviews Java code via java-review subagent, creates bug subtask if review has findings, updates parent issue status to "Need more work" or "Reviewed"
+description: Reviews Java code via java-review subagent, creates bug subtask if review has findings, updates parent issue status to "ai:Need more work" or "ai:Reviewed"
 mode: subagent
 permission:
   read: allow
@@ -96,9 +96,9 @@ Read the review output to determine the verdict.
 
    **IMPORTANT:** Do NOT include these sections in the subtask: Strengths, Test Assessment, Architecture & Maintainability, Performance & Scalability, Security & Reliability, Final Verdict. Only "Summary" and "Findings".
 
-2. **Update parent issue status to "Need more work":**
+2. **Update parent issue status to "ai:Need more work":**
    ```
-   redmine_redmine_update_issue(id=<parent_id>, status_id=9, notes="Status changed to 'Need more work' — code review found findings. See subtask #[subtask_id] for details.")
+   redmine_redmine_update_issue(id=<parent_id>, status_id=9, notes="Status changed to 'ai:Need more work' — code review found findings. See subtask #[subtask_id] for details.")
    ```
 
 3. **Report to user:**
@@ -108,9 +108,9 @@ Read the review output to determine the verdict.
 
 #### Case B: Review has ZERO findings — APPROVE
 
-1. **Update parent issue status to "Reviewed":**
+1. **Update parent issue status to "ai:Reviewed":**
    ```
-   redmine_redmine_update_issue(id=<parent_id>, status_id=10, notes="Status changed to 'Reviewed' — no issues found during code review.")
+   redmine_redmine_update_issue(id=<parent_id>, status_id=10, notes="Status changed to 'ai:Reviewed' — no issues found during code review.")
    ```
 
 2. **Report to user:**
@@ -119,10 +119,10 @@ Read the review output to determine the verdict.
 
 ## Decision Rules
 
-- **ANY findings at all** (BLOCKER, CRITICAL, MAJOR, MINOR, NIT, or even "APPROVE WITH COMMENTS") → Case A (Need more work + subtask)
-- **ZERO findings** (pure APPROVE) → Case B (Reviewed)
+- **ANY findings at all** (BLOCKER, CRITICAL, MAJOR, MINOR, NIT, or even "APPROVE WITH COMMENTS") → Case A (ai:Need more work + subtask)
+- **ZERO findings** (pure APPROVE) → Case B (ai:Reviewed)
 
-**Rule of thumb: if the review output contains any findings section, any [MINOR], [NIT], [MAJOR], etc. markers, or any "comments" — create the subtask and set "Need more work".**
+**Rule of thumb: if the review output contains any findings section, any [MINOR], [NIT], [MAJOR], etc. markers, or any "comments" — create the subtask and set "ai:Need more work".**
 
 ## Important Notes
 
@@ -130,8 +130,8 @@ Read the review output to determine the verdict.
 - Subtask tracker must be Bug (id: 2)
 - Subtask status must be New (id: 1)
 - Parent issue statuses:
-  - "🚧 Need more work" = 9
-  - "👍 Reviewed" = 10
+  - "🚧 ai:Need more work" = 9
+  - "👍 ai:Reviewed" = 10
 - Subtask description has EXACTLY two sections: "Summary" and "Findings" — nothing else
 - All descriptions and notes must use CommonMark Markdown (GitHub Flavored)
 - Never use `==`, `h1.`, or other non-CommonMark formatting
