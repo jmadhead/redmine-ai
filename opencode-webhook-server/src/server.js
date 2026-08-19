@@ -11,26 +11,30 @@ const MAX_POLL_TIMEOUT = parseInt(process.env.MAX_POLL_TIMEOUT, 10) || 600000; /
 // Agent message templates
 const AGENT_MESSAGES = {
   implementor: (issueId, subject, description) =>
-    `@redmine-implementor implement redmine task #${issueId}. Subject: ${subject}. Description: ${description}`,
+    `@redmine-implementor implement redmine task #${issueId}`,
+  implementorMoreWork: (issueId, subject, description) =>
+    `@redmine-implementor check review results in subtask bug for redmine task #${issueId} and fix`,
   reviewer: (issueId, subject, description) =>
-    `@redmine-reviewer review redmine task #${issueId}. Subject: ${subject}. Description: ${description}`,
-};
-
-// Status → agent mapping
-const STATUS_AGENT_MAP = {
-  'new': 'implementor',
-  'need more work': 'implementor',
-  'review': 'reviewer',
+    `@redmine-reviewer review redmine task #${issueId}`,
 };
 
 function determineAgent(statusName) {
   const lower = (statusName || '').toLowerCase().trim();
-  return STATUS_AGENT_MAP[lower] || null;
+
+  if (lower.includes('ai:new')) {
+    return 'implementor';
+  } else if (lower.includes('ai:need more work')) {
+    return 'implementor-more-work';
+  } else if (lower.includes('ai:review')) {
+    return 'reviewer';
+  }
+
+  return null;
 }
 
 function shouldProcessWebhook(payload) {
-  const issue = payload.body?.data?.issue;
-  if (!issue) return { skip: true, reason: 'No issue data in payload' };
+  const issue = payload.data?.issue;
+  if (!issue) return { skip: true, reason: 'No issue data in payload ' + JSON.stringify(payload) };
 
   const assigneeName = issue.assigned_to?.name || '';
   if (!assigneeName.toLowerCase().includes('ai')) {
@@ -46,8 +50,7 @@ function shouldProcessWebhook(payload) {
   return { skip: false, agent, issue, statusName };
 }
 
-async function triggerOpencode(message) {
-  // Create session
+async function createSession() {
   const sessionRes = await fetch(`${OPENCODE_URL}/session`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -57,9 +60,10 @@ async function triggerOpencode(message) {
     throw new Error(`Failed to create session: ${sessionRes.status} ${sessionRes.statusText}`);
   }
   const sessionData = await sessionRes.json();
-  const sessionId = sessionData.id || sessionData.sessionId;
+  return sessionData.id || sessionData.sessionId;
+}
 
-  // Send message
+async function sendMessage(sessionId, message) {
   const msgRes = await fetch(`${OPENCODE_URL}/session/${sessionId}/message`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -70,13 +74,13 @@ async function triggerOpencode(message) {
   if (!msgRes.ok) {
     throw new Error(`Failed to send message: ${msgRes.status} ${msgRes.statusText}`);
   }
-
-  return sessionId;
 }
 
 function pollSession(sessionId) {
   return new Promise((resolve) => {
     const startTime = Date.now();
+
+    console.log(`[poll] polling session ${sessionId}`);
 
     const poll = async () => {
       const elapsed = Date.now() - startTime;
@@ -133,30 +137,35 @@ app.post('/redmine-webhook', (req, res) => {
   const subject = issue.subject || '';
   const description = issue.description || '';
 
-  const message = agent === 'implementor'
-    ? AGENT_MESSAGES.implementor(issueId, subject, description)
-    : AGENT_MESSAGES.reviewer(issueId, subject, description);
+  var message = null;
+   if (agent === 'implementor') {
+    message = AGENT_MESSAGES.implementor(issueId, subject, description);
+   } else if (agent === 'implementor-more-work') {
+    message = AGENT_MESSAGES.implementorMoreWork(issueId, subject, description);
+   } else if (agent === 'reviewer') {
+    message = AGENT_MESSAGES.reviewer(issueId, subject, description);
+   }
 
-  const actionName = agent === 'implementor' ? 'redmine-implementor' : 'redmine-reviewer';
+  const actionName = agent === 'reviewer' ? 'redmine-reviewer' : 'redmine-implementor';
 
-  // Fire-and-forget: trigger opencode and poll in background
+  // Create session to get sessionId for response
   (async () => {
     try {
-      const sessionId = await triggerOpencode(message);
-      console.log(`[webhook] Triggered ${actionName} for issue #${issueId}, session: ${sessionId}`);
+      const sessionId = await createSession();
+      console.log(`[webhook] Created session ${sessionId} for issue #${issueId}`);
+      res.status(200).json({ sessionId, issueId, action: actionName, status: 'processing' });
+
+      // Fire-and-forget: send message and poll in background
+      await sendMessage(sessionId, message);
+      console.log(`[webhook] Message sent to ${actionName} for issue #${issueId}`);
       pollSession(sessionId);
     } catch (err) {
-      console.error(`[webhook] Error triggering ${actionName}: ${err.message}`);
+      console.error(`[webhook] Error processing issue #${issueId}: ${err.message}`);
+      if (!res.headersSent) {
+        res.status(500).json({ error: err.message });
+      }
     }
   })();
-
-  // Immediate response
-  res.status(200).json({
-    sessionId: 'pending',
-    issueId,
-    action: actionName,
-    status: 'processing',
-  });
 });
 
 // Health check
