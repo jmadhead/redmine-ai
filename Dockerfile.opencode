@@ -1,0 +1,8 @@
+FROM ghcr.io/anomalyco/opencode:latest
+
+# Install Node.js and npm (needed for MCP servers)
+RUN apk add --no-cache nodejs npm
+
+# Verify installation
+RUN node --version && npm --version
+
