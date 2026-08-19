@@ -9,7 +9,7 @@ services:
       POSTGRES_DB: redmine
     volumes:
       - redmine-pgdata:/var/lib/postgresql/data
-      - ./init-n8n-db.sh:/docker-entrypoint-initdb.d/init-n8n-db.sh
+      - ./init-redmine-db.sh:/docker-entrypoint-initdb.d/init-redmine-db.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U redmine"]
       interval: 5s
@@ -52,28 +52,21 @@ services:
     networks:
       - redmine-ai
 
-  n8n:
-    image: n8nio/n8n
-    container_name: n8n
+  webhook-server:
+    build:
+      context: ./opencode-webhook-server
+      dockerfile: Dockerfile
+    container_name: webhook-server
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      - "8091:8080"
     environment:
-      DB_TYPE: postgresdb
-      DB_POSTGRESDB_HOST: postgres
-      DB_POSTGRESDB_PORT: 5432
-      DB_POSTGRESDB_DATABASE: n8n
-      DB_POSTGRESDB_USER: redmine
-      DB_POSTGRESDB_PASSWORD: verySecretPassword
-      N8N_BASIC_AUTH_ACTIVE: "true"
-      N8N_BASIC_AUTH_USER: "admin"
-      N8N_BASIC_AUTH_PASSWORD: "n8n-secret"
-    volumes:
-      - n8n-data:/home/node/.n8n
-      - /Users/jmadhead/IdeaProjects:/data/IdeaProjects
+      OPENCODE_URL: http://opencode:4096
+      WEBHOOK_PORT: 8080
+      POLL_INTERVAL_MS: 2000
+      MAX_POLL_TIMEOUT: 600000
     depends_on:
-      postgres:
-        condition: service_healthy
+      - opencode
     networks:
       - redmine-ai
 
@@ -91,7 +84,7 @@ services:
       - /Users/jmadhead/IdeaProjects/redmine-ai/redmine-mcp:/root/.config/opencode/redmine-mcp
       - /Users/jmadhead/IdeaProjects:/app/IdeaProjects
     working_dir: /app/IdeaProjects/redmine-ai
-    command: serve --port 4096 --hostname 0.0.0.0
+    command: --log-level DEBUG serve --port 4096 --hostname 0.0.0.0
     networks:
       - redmine-ai
     depends_on:
@@ -100,7 +93,6 @@ services:
 
 volumes:
   redmine-pgdata:
-  n8n-data:
 
 networks:
   redmine-ai:

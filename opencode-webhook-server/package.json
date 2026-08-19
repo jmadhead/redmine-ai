@@ -1,0 +1,13 @@
+{
+  "name": "opencode-webhook-server",
+  "version": "1.0.0",
+  "description": "Express.js webhook server for Redmine → opencode agent automation",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0"
+  }
+}
