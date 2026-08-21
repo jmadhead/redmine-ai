@@ -84,7 +84,6 @@ services:
       - /Users/jmadhead/IdeaProjects/redmine-ai/redmine-mcp:/root/.config/opencode/redmine-mcp
       - /Users/jmadhead/IdeaProjects:/app/IdeaProjects
     working_dir: /app/IdeaProjects/redmine-ai
-    command: --log-level DEBUG serve --port 4096 --hostname 0.0.0.0
     networks:
       - redmine-ai
     depends_on:

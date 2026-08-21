@@ -6,11 +6,13 @@ COPY package.json ./
 RUN npm install --production
 
 COPY src/ ./src/
+COPY agents/ ./agents/
 
 ENV OPENCODE_URL=http://opencode:4096
 ENV WEBHOOK_PORT=8080
 ENV POLL_INTERVAL_MS=2000
 ENV MAX_POLL_TIMEOUT=600000
+ENV AGENTS_DIR=/app/agents
 
 EXPOSE 8080
 

@@ -3,3 +3,4 @@
 /redmine-mcp/dist/
 /.idea/
 /redmine/
+/opencode-webhook-server/node_modules/
