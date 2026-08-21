@@ -7,6 +7,9 @@ const OPENCODE_URL = process.env.OPENCODE_URL || 'http://opencode:4096';
 const WEBHOOK_PORT = parseInt(process.env.WEBHOOK_PORT, 10) || 8080;
 const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS, 10) || 2000;
 const MAX_POLL_TIMEOUT = parseInt(process.env.MAX_POLL_TIMEOUT, 10) || 600000;
+const OPENCODE_WORKSPACE = process.env.OPENCODE_WORKSPACE || '/app/IdeaProjects';
+const DEFAULT_MODEL_ID = process.env.DEFAULT_MODEL_ID || 'Qwen3_6-35B-A3B-MTP';
+const DEFAULT_MODEL_PROVIDER = process.env.DEFAULT_MODEL_PROVIDER || 'llama.cpp';
 
 const AGENT_MESSAGES = {
   implementor: (issueId, subject, description) =>
@@ -15,6 +18,12 @@ const AGENT_MESSAGES = {
     `@redmine-implementor check review results in subtask bug for redmine task #${issueId} and fix`,
   reviewer: (issueId, subject, description) =>
     `@redmine-reviewer review redmine task #${issueId}`,
+};
+
+const OPENCODE_AGENTS = {
+  'implementor': 'redmine-implementor',
+  'implementor-more-work': 'redmine-implementor',
+  'reviewer': 'redmine-reviewer',
 };
 
 function determineAgent(statusName) {
@@ -41,11 +50,21 @@ function shouldProcessWebhook(payload) {
 }
 
 async function createSession(agent) {
-  const sessionRes = await fetch(`${OPENCODE_URL}/api/session`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: '{}' //JSON.stringify({ agent }),
-  });
+  const opencodeAgent = OPENCODE_AGENTS[agent] || agent;
+
+  const req ={
+                 method: 'POST',
+                 headers: { 'Content-Type': 'application/json' },
+                 body: JSON.stringify({
+                   agent: 'build',
+                   model: { id: DEFAULT_MODEL_ID, providerID: DEFAULT_MODEL_PROVIDER },
+                   location: { directory: OPENCODE_WORKSPACE },
+                 }),
+               };
+
+  console.log(`Sending request ${JSON.stringify(req, null, 4)}`);
+
+  const sessionRes = await fetch(`${OPENCODE_URL}/api/session`, req);
   if (!sessionRes.ok) {
     throw new Error(`Failed to create session: ${sessionRes.status} ${sessionRes.statusText}`);
   }
@@ -63,20 +82,6 @@ async function sendMessage(sessionId, message) {
     throw new Error(`Failed to send message: ${promptRes.status} ${promptRes.statusText}`);
   }
   return promptRes.json();
-}
-
-async function setModel(sessionId) {
-  const promptRes = await fetch(`${OPENCODE_URL}/api/session/${sessionId}/model`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ model: { id: 'Qwen3.6-35B-A3B-MTP', providerID: 'llama.cpp' } }),
-  });
-  if (!promptRes.ok) {
-    throw new Error(`Failed to set model: ${promptRes.status} ${promptRes.statusText}`);
-  } else {
-    console.log(`Model sw res: ${JSON.stringify(promptRes, null, 4)}`);
-  }
-  return null;
 }
 
 function pollSession(sessionId) {
@@ -144,6 +149,9 @@ function pollSession(sessionId) {
 
 app.post('/redmine-webhook', (req, res) => {
   const result = shouldProcessWebhook(req.body);
+
+  console.log(`Got request ${JSON.stringify(req.body, null, 4)}`)
+
   if (result.skip) {
     console.log(`[webhook] Skipped: ${result.reason}`);
     return res.status(200).json({ status: 'skipped', reason: result.reason });
@@ -167,17 +175,15 @@ app.post('/redmine-webhook', (req, res) => {
 
   (async () => {
     try {
-//      const sessionId = await createSession(agent);
-      const sessionId = await createSession();
+      const sessionId = await createSession(agent);
       console.log(`[webhook] Created session ${sessionId} for issue #${issueId}`);
       res.status(200).json({ sessionId, issueId, action: actionName, status: 'processing' });
 
-      await setModel(sessionId);
       await sendMessage(sessionId, message);
       console.log(`[webhook] Message sent to session ${sessionId}`);
       pollSession(sessionId);
     } catch (err) {
-      console.error(`[webhook] Error processing issue #${issueId}: ${err.message} ${JSON.stringify(err, null, 4)}`);
+      console.error(`[webhook] Error processing issue #${issueId}: ${err} ${JSON.stringify(err, null, 4)}`);
       if (!res.headersSent) {
         res.status(500).json({ error: err.message });
       }
