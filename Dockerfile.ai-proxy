@@ -1,3 +1,0 @@
-FROM alpine/socat
-ENTRYPOINT ["socat"]
-CMD ["TCP-LISTEN:8090,fork,reuseaddr","TCP:host.containers.internal:8090"]

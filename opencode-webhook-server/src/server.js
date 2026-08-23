@@ -1,20 +1,19 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const pty = require('node-pty');
 
 const app = express();
 app.use(express.json());
 
-const OPENCODE_URL = process.env.OPENCODE_URL || 'http://opencode:4096';
-const WEBHOOK_PORT = parseInt(process.env.WEBHOOK_PORT, 10) || 8080;
-const POLL_INTERVAL_MS = parseInt(process.env.POLL_INTERVAL_MS, 10) || 2000;
-const MAX_POLL_TIMEOUT = parseInt(process.env.MAX_POLL_TIMEOUT, 10) || 6000000;
-const OPENCODE_WORKSPACE = process.env.OPENCODE_WORKSPACE || '/app/IdeaProjects';
+const OPENCODE_BIN = process.env.OPENCODE_BIN || '/Users/jmadhead/.opencode/bin/opencode';
+const OPENCODE_WORKSPACE = process.env.OPENCODE_WORKSPACE || '/Users/jmadhead/IdeaProjects';
 const DEFAULT_MODEL_ID = process.env.DEFAULT_MODEL_ID || 'Qwen3_6-35B-A3B-MTP';
 const DEFAULT_MODEL_PROVIDER = process.env.DEFAULT_MODEL_PROVIDER || 'llama.cpp';
 const AGENTS_DIR = process.env.AGENTS_DIR || './agents';
+const MAX_OPENCODE_TIMEOUT = parseInt(process.env.OPENCODE_TIMEOUT, 10) || 6000000;
+const WEBHOOK_PORT = parseInt(process.env.WEBHOOK_PORT, 10) || 8080;
 
-// Strip YAML frontmatter and return just the markdown content
 function stripFrontmatter(content) {
   const trimmed = content.trim();
   if (trimmed.startsWith('---')) {
@@ -26,7 +25,6 @@ function stripFrontmatter(content) {
   return trimmed;
 }
 
-// Load agent prompt files from the agents/ directory at startup
 const agentPrompts = {};
 
 function loadAgentPrompts() {
@@ -36,10 +34,7 @@ function loadAgentPrompts() {
       if (!file.endsWith('.md')) continue;
       const filePath = path.join(AGENTS_DIR, file);
       const content = fs.readFileSync(filePath, 'utf-8');
-      // Map redmine-reviewer.md -> reviewer, etc.
       const name = file.replace(/\.md$/, '');
-      // Use the filename as the key (e.g., "redmine-reviewer" -> "reviewer")
-      // Also strip the "redmine-" prefix if present for the short alias
       const shortName = name.startsWith('redmine-') ? name.replace('redmine-', '') : name;
       agentPrompts[shortName] = stripFrontmatter(content);
     }
@@ -56,6 +51,58 @@ const OPENCODE_AGENTS = {
   'implementor-more-work': 'implementor',
   'reviewer': 'reviewer',
 };
+
+// Session deduplication & queue tracker per agent
+class AgentSessionTracker {
+  constructor() {
+    this.activeSessions = new Map();
+    this.queue = new Map();
+    this.processing = new Set();
+  }
+
+  _key(agent, issueId) {
+    return `${agent}:${issueId}`;
+  }
+
+  isProcessing(agent, issueId) {
+    return this.processing.has(this._key(agent, issueId));
+  }
+
+  enqueue(agent, item) {
+    if (!this.queue.has(agent)) {
+      this.queue.set(agent, []);
+    }
+    this.queue.get(agent).push(item);
+  }
+
+  dequeue(agent) {
+    const q = this.queue.get(agent);
+    if (!q || q.length === 0) return null;
+    const item = q.shift();
+    if (q.length === 0) this.queue.delete(agent);
+    return item;
+  }
+
+  queueSize(agent) {
+    const q = this.queue.get(agent);
+    return q ? q.length : 0;
+  }
+
+  start(agent, issueId, sessionId) {
+    this.processing.add(this._key(agent, issueId));
+    this.activeSessions.set(agent, { sessionId, issueId });
+  }
+
+  finish(agent, issueId) {
+    this.processing.delete(this._key(agent, issueId));
+    const session = this.activeSessions.get(agent);
+    if (session && session.issueId === issueId) {
+      this.activeSessions.delete(agent);
+    }
+  }
+}
+
+const agentTracker = new AgentSessionTracker();
 
 // Generate a prompt by combining issue context with the agent instructions
 function buildAgentMessage(agentName, issueId, subject, description) {
@@ -99,121 +146,151 @@ function shouldProcessWebhook(payload) {
   return { skip: false, agent, issue, statusName };
 }
 
-function generateMessageID() {
-  const chars = '0123456789abcdef';
-  let id = 'msg_';
-  for (let i = 0; i < 24; i++) {
-    const idx = chars[Math.floor(Math.random() * chars.length)];
-    id += i % 2 === 0 ? idx.toUpperCase() : idx;
-  }
-  return id;
-}
+async function runOpencodeProcess(message, workspaceDir) {
+  return new Promise((resolve, reject) => {
+    let sessionId = null;
+    let timedOut = false;
+    let resolved = false;
 
-async function createSession(agent) {
-  const sessionRes = await fetch(`${OPENCODE_URL}/session?directory=${encodeURIComponent(OPENCODE_WORKSPACE)}`, {
-    method: 'POST',
-    headers: { 'x-opencode-directory': encodeURIComponent(OPENCODE_WORKSPACE) },
-  });
-  if (!sessionRes.ok) {
-    throw new Error(`Failed to create session: ${sessionRes.status} ${sessionRes.statusText}`);
-  }
-  const sessionData = await sessionRes.json();
-  return sessionData.id;
-}
-
-async function sendMessage(sessionId, message) {
-  const promptRes = await fetch(`${OPENCODE_URL}/session/${sessionId}/prompt_async`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-opencode-directory': encodeURIComponent(OPENCODE_WORKSPACE),
-    },
-    body: JSON.stringify({
-      messageID: generateMessageID(),
-      agent: 'build',
-      model: { modelID: DEFAULT_MODEL_ID, providerID: DEFAULT_MODEL_PROVIDER },
-      parts: [{ type: 'text', text: message }],
-    }),
-  });
-  if (!promptRes.ok) {
-    throw new Error(`Failed to send message: ${promptRes.status} ${promptRes.statusText}`);
-  }
-}
-
-function pollSession(sessionId) {
-  return new Promise((resolve) => {
-    const startTime = Date.now();
-    const seenMessageIds = new Set();
-
-    const poll = async () => {
-      const elapsed = Date.now() - startTime;
-      if (elapsed >= MAX_POLL_TIMEOUT) {
-        console.log(`[poll] Timeout after ${elapsed}ms for session ${sessionId}`);
-        resolve();
-        return;
+    const timeoutId = setTimeout(() => {
+      timedOut = true;
+      console.log(`[opencode] Timeout after ${MAX_OPENCODE_TIMEOUT}ms — killing process`);
+      ptyProcess.kill('SIGINT');
+      setTimeout(() => { try { ptyProcess.kill('SIGKILL'); } catch {} }, 5000);
+      if (!resolved) {
+        resolved = true;
+        reject(new Error(`Process killed after timeout (${MAX_OPENCODE_TIMEOUT}ms)`));
       }
+    }, MAX_OPENCODE_TIMEOUT);
 
-      try {
-        const res = await fetch(`${OPENCODE_URL}/session/${sessionId}/message?limit=20`);
-        if (!res.ok) {
-          console.log(`[poll] Session ${sessionId} poll failed: ${res.status}`);
-          resolve();
-          return;
+    const modelSpec = `${DEFAULT_MODEL_PROVIDER}/${DEFAULT_MODEL_ID}`;
+    const ptyProcess = pty.spawn(OPENCODE_BIN, [
+      'run',
+      message,
+      '--format', 'json',
+      '--agent', 'build',
+      '--model', modelSpec,
+      '--dir', workspaceDir,
+      '--auto',
+    ], {
+      name: 'xterm-color',
+      cols: 200,
+      rows: 50,
+      cwd: workspaceDir,
+      env: {
+        ...process.env,
+        HOME: process.env.HOME,
+        PATH: process.env.PATH,
+      },
+    });
+
+    process.stdout.write(`[opencode] PTY PID=${ptyProcess.pid} model=${modelSpec} dir=${workspaceDir}\n`);
+
+    let stdoutBuffer = '';
+
+    ptyProcess.on('data', (data) => {
+      stdoutBuffer += data.toString();
+      const lines = stdoutBuffer.split('\n');
+      stdoutBuffer = lines.pop();
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+
+        // Skip plugin initialization messages like "[opencode-llama-cpp] ..."
+        if (trimmed.startsWith('[opencode-')) continue;
+
+        let event;
+        try {
+          event = JSON.parse(trimmed);
+        } catch {
+          continue;
         }
 
-        const data = await res.json();
-        const elapsedSec = ((Date.now() - startTime) / 1000).toFixed(1);
-        const messages = data || [];
+        const eventType = event.type || '';
+        const eventSessionID = event.sessionID;
 
-        const newMessages = messages.filter((m) => !seenMessageIds.has(m.messageID));
-        newMessages.forEach((m) => seenMessageIds.add(m.messageID));
-
-        for (const m of newMessages) {
-          const text = (m.content || [])
-            .filter((c) => c.type === 'text')
-            .map((c) => c.text)
-            .join('\n')
-            .trim();
-          const summary = text ? text.substring(0, 200) : '';
-          const model = m.model ? `${m.model.modelID}` : '';
-          console.log(`[poll] [${elapsedSec}s] session=${m.sessionID || sessionId} type=${m.type} agent=${m.agent || ''} model=${model} status=${m.finish || 'in-progress'} subagent_type=${m.subagent_type || ''} message="${summary}"`);
-        }
-
-        const assistantMessages = messages.filter((m) => m.type === 'assistant');
-        const lastAssistant = assistantMessages[assistantMessages.length - 1];
-
-        if (lastAssistant) {
-          const assistantText = (lastAssistant.content || [])
-            .filter((c) => c.type === 'text')
-            .map((c) => c.text)
-            .join('\n');
-          if (assistantText) {
-            console.log(`[poll] [${elapsedSec}s] ${assistantText}`);
+        if (eventType === 'step_start') {
+          // First step_start gives us the session ID
+          if (!sessionId && eventSessionID) {
+            sessionId = eventSessionID;
+            console.log(`[opencode] Session created: ${sessionId}`);
           }
-          console.log(`[poll] [${elapsedSec}s] session ${sessionId} finish=${lastAssistant.finish || 'in-progress'}`);
-        }
-
-        const isComplete = lastAssistant?.finish === 'stop';
-        if (isComplete) {
-          console.log(`[poll] Session ${sessionId} completed`);
-          resolve();
-          return;
-        }
-
-        setTimeout(poll, POLL_INTERVAL_MS);
-      } catch (err) {
-        console.error(`[poll] Error polling session ${sessionId}: ${err.message}`);
-        const elapsed = Date.now() - startTime;
-        if (elapsed < MAX_POLL_TIMEOUT) {
-          setTimeout(poll, POLL_INTERVAL_MS);
-        } else {
-          resolve();
+        } else if (eventType === 'text') {
+          // Text content from assistant
+          const text = event.part?.text || '';
+          if (text && sessionId) {
+            console.log(`[opencode] [${sessionId}] ${text}`);
+          }
+        } else if (eventType === 'step_finish') {
+          const reason = event.part?.reason || 'unknown';
+          if (sessionId) {
+            console.log(`[opencode] Session ${sessionId} finish=${reason}`);
+          }
+          // Session complete — kill process cleanly
+          if (reason === 'stop') {
+            clearTimeout(timeoutId);
+            ptyProcess.kill('SIGINT');
+          }
         }
       }
-    };
+    });
 
-    poll();
+    ptyProcess.on('exit', (code, signal) => {
+      clearTimeout(timeoutId);
+
+      if (!resolved) {
+        resolved = true;
+        if (timedOut) {
+          reject(new Error(`Process killed after timeout (${MAX_OPENCODE_TIMEOUT}ms)`));
+        } else if (code !== 0 && code !== null) {
+          reject(new Error(`Process exited with code=${code} signal=${signal}`));
+        } else {
+          resolve(sessionId);
+        }
+      }
+    });
+
+    ptyProcess.on('error', (err) => {
+      clearTimeout(timeoutId);
+      reject(err);
+    });
   });
+}
+
+async function processAgentItem(agent, item) {
+  const resolvedIssueId = item.issueId;
+  const subject = item.subject;
+  const description = item.description;
+
+  const message = buildAgentMessage(agent, resolvedIssueId, subject, description);
+  if (!message) {
+    console.error(`[webhook] Could not build message for agent: ${agent}`);
+    agentTracker.finish(agent, resolvedIssueId);
+    processNextInQueue(agent);
+    return;
+  }
+
+  const actionName = agent === 'reviewer' ? 'redmine-reviewer' : 'redmine-implementor';
+
+  try {
+    const sessionId = await runOpencodeProcess(message, OPENCODE_WORKSPACE);
+    agentTracker.start(agent, resolvedIssueId, sessionId);
+    console.log(`[webhook] Opencode run completed for issue #${resolvedIssueId}${sessionId ? ` (session: ${sessionId})` : ''}`);
+  } catch (err) {
+    console.error(`[webhook] Error processing issue #${resolvedIssueId}: ${err.message}`);
+  } finally {
+    agentTracker.finish(agent, resolvedIssueId);
+    processNextInQueue(agent);
+  }
+}
+
+function processNextInQueue(agent) {
+  const next = agentTracker.dequeue(agent);
+  if (next) {
+    console.log(`[webhook] Processing next queued item for agent ${agent}: issue #${next.issueId}`);
+    processAgentItem(agent, next);
+  }
 }
 
 app.post('/redmine-webhook', (req, res) => {
@@ -235,30 +312,25 @@ app.post('/redmine-webhook', (req, res) => {
   const subject = resolvedIssue.subject || '';
   const description = resolvedIssue.description || '';
 
-  let message = buildAgentMessage(agent, resolvedIssueId, subject, description);
-  if (!message) {
-    console.error(`[webhook] Could not build message for agent: ${agent}`);
-    return res.status(500).json({ error: `No prompt loaded for agent: ${agent}` });
-  }
-
   const actionName = agent === 'reviewer' ? 'redmine-reviewer' : 'redmine-implementor';
 
-  (async () => {
-    try {
-      const sessionId = await createSession(agent);
-      console.log(`[webhook] Created session ${sessionId} for issue #${resolvedIssueId}`);
-      res.status(200).json({ sessionId, issueId: resolvedIssueId, action: actionName, status: 'processing' });
+  // Dedup: same agent+issue already processing or queued
+  if (agentTracker.isProcessing(agent, resolvedIssueId)) {
+    console.log(`[webhook] Dropped duplicate request for agent ${agent} issue #${resolvedIssueId}`);
+    return res.status(200).json({ issueId: resolvedIssueId, action: actionName, status: 'dropped', reason: 'already processing or queued' });
+  }
 
-      await sendMessage(sessionId, message);
-      console.log(`[webhook] Message sent to session ${sessionId}`);
-      pollSession(sessionId);
-    } catch (err) {
-      console.error(`[webhook] Error processing issue #${resolvedIssueId}: ${err.message}`);
-      if (!res.headersSent) {
-        res.status(500).json({ error: err.message });
-      }
-    }
-  })();
+  // Queue if agent already has an active session
+  if (agentTracker.activeSessions.has(agent)) {
+    const existing = agentTracker.activeSessions.get(agent);
+    console.log(`[webhook] Queueing issue #${resolvedIssueId} for agent ${agent} (active session: issue #${existing.issueId})`);
+    agentTracker.enqueue(agent, { issueId: resolvedIssueId, subject, description });
+    return res.status(200).json({ issueId: resolvedIssueId, action: actionName, status: 'queued', queuedPosition: agentTracker.queueSize(agent), reason: 'agent busy' });
+  }
+
+  // Process immediately
+  processAgentItem(agent, { issueId: resolvedIssueId, subject, description });
+  res.status(200).json({ issueId: resolvedIssueId, action: actionName, status: 'processing' });
 });
 
 app.get('/health', (_req, res) => {
@@ -267,5 +339,6 @@ app.get('/health', (_req, res) => {
 
 app.listen(WEBHOOK_PORT, '0.0.0.0', () => {
   console.log(`[server] Webhook server listening on port ${WEBHOOK_PORT}`);
-  console.log(`[server] OPENCODE_URL=${OPENCODE_URL}`);
+  console.log(`[server] OPENCODE_BIN=${OPENCODE_BIN}`);
+  console.log(`[server] OPENCODE_WORKSPACE=${OPENCODE_WORKSPACE}`);
 });

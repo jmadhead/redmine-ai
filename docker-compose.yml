@@ -43,53 +43,6 @@ services:
     networks:
       - redmine-ai
 
-  ai-proxy:
-    build:
-      context: .
-      dockerfile: Dockerfile.ai-proxy
-    container_name: ai-proxy
-    restart: unless-stopped
-    networks:
-      - redmine-ai
-
-  webhook-server:
-    build:
-      context: ./opencode-webhook-server
-      dockerfile: Dockerfile
-    container_name: webhook-server
-    restart: unless-stopped
-    ports:
-      - "8091:8080"
-    environment:
-      OPENCODE_URL: http://opencode:4096
-      WEBHOOK_PORT: 8080
-      POLL_INTERVAL_MS: 2000
-      MAX_POLL_TIMEOUT: 600000
-    depends_on:
-      - opencode
-    networks:
-      - redmine-ai
-
-  opencode:
-    build:
-      context: .
-      dockerfile: Dockerfile.opencode
-    container_name: opencode
-    restart: unless-stopped
-    ports:
-      - "4096:4096"
-    volumes:
-      - ./opencode-container-config.jsonc:/root/.config/opencode/opencode.jsonc
-      - ./agents:/root/.config/opencode/agents
-      - /Users/jmadhead/IdeaProjects/redmine-ai/redmine-mcp:/root/.config/opencode/redmine-mcp
-      - /Users/jmadhead/IdeaProjects:/app/IdeaProjects
-    working_dir: /app/IdeaProjects/redmine-ai
-    networks:
-      - redmine-ai
-    depends_on:
-      - ai-proxy
-      - redmine
-
 volumes:
   redmine-pgdata:
 
