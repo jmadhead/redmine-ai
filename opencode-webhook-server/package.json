@@ -8,7 +8,6 @@
     "dev": "node --watch src/server.js"
   },
   "dependencies": {
-    "express": "^4.21.0",
-    "node-pty": "^1.2.0-beta.15"
+    "express": "^4.21.0"
   }
 }

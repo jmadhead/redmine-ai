@@ -4,3 +4,4 @@
 /.idea/
 /redmine/
 /opencode-webhook-server/node_modules/
+/opencode-webhook-server/.env
