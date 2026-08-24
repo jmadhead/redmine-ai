@@ -19,6 +19,8 @@ Run `git status` to check for uncommitted changes:
 - **If there are uncommitted changes:** Review the diff of changed files against the current branch using `git diff`.
 - **If there are no uncommitted changes:** Identify the current branch with `git branch --show-current`, then review the diff against the main branch (or `master` if that's the default) using `git diff main...HEAD` or `git diff master...HEAD`.
 
+**Container note:** when judging build/test/DB coverage, remember the runtime may be **podman** rather than docker. If `docker` is missing, check `podman --version` before concluding containers are unavailable.
+
 ### Step 2: Understand the Issue/Ticket
 
 - If the user's request already contains a ticket reference (e.g., "REDMINE-123", "issue #123", "ticket ABC-456", or any Redmine issue reference), extract it and use that ticket.
@@ -28,8 +30,8 @@ Run `git status` to check for uncommitted changes:
 
 Use the Redmine MCP tools to fetch the ticket and related tickets:
 
-1. Fetch the main issue using `redmine_redmine_get_issue(id=<issue_id>)`
-2. Fetch related issues from the `relations` field of the main issue
+1. Fetch the main issue using `redmine_issue_workflow(issue_id=<issue_id>)` — this returns the description, notes (journals), relations, children, custom fields, and time logged in a single call.
+2. Use the `relations` / `children` from that response to identify related tickets; fetch any that need detail with `redmine_redmine_issue_workflow(issue_id=<related_id>)`
 3. Read the issue description, notes, and any custom fields to understand the task requirements, constraints, and acceptance criteria
 4. Review related tickets for additional context (dependencies, blocking issues, duplicates, etc.)
 
@@ -972,6 +974,15 @@ Purely stylistic or optional improvement.
 
 Do not inflate severity.
 
+### Scope Tag
+
+Every finding must also carry a **scope tag**:
+
+- `[IN-SCOPE]` — a genuine defect in code modified by this change that violates the ticket's stated requirements/acceptance criteria, or a regression introduced by this change.
+- `[FOLLOW-UP]` — everything else: unhandled edge case, unclear/ambiguous spec point, out-of-scope idea, refactor, or nice-to-have not required by this change.
+
+Only `[IN-SCOPE]` BLOCKER, CRITICAL, or MAJOR findings may drive a REQUEST CHANGES verdict. MINOR, NIT, and all `[FOLLOW-UP]` findings are non-blocking; they are routed to follow-up tasks, never used to block this change. When a spec point is ambiguous with no project doc or prior decision, accept the implementer's interpretation and tag it `[FOLLOW-UP]` rather than flagging it as a defect.
+
 ---
 
 # 32. Evidence-Based Findings
@@ -979,11 +990,12 @@ Do not inflate severity.
 Every finding must include:
 
 1. **Severity**
-2. **Location**
-3. **Problem**
-4. **Why it matters**
-5. **Concrete recommendation**
-6. **Example**, where useful
+2. **Scope tag** (`[IN-SCOPE]` or `[FOLLOW-UP]`)
+3. **Location**
+4. **Problem**
+5. **Why it matters**
+6. **Concrete recommendation**
+7. **Example**, where useful
 
 Use exact file paths and line numbers whenever available.
 
@@ -1007,6 +1019,7 @@ Before reporting a finding:
 6. Determine whether the behavior is intentional.
 7. Determine whether the issue is actually reachable.
 8. Consider whether the suggested fix creates a worse tradeoff.
+9. Verify the finding is in-scope for this change. If it concerns pre-existing code, an edge case, an improvement, or an ambiguous/out-of-scope spec point, tag it `[FOLLOW-UP]` (non-blocking) instead of treating it as a blocker.
 
 Do not flag hypothetical problems without reasonable evidence.
 
@@ -1074,6 +1087,7 @@ Before completing the review, explicitly verify:
 * [ ] Git/diff hygiene reviewed
 * [ ] Migration/deployment concerns reviewed
 * [ ] Operational readiness reviewed
+* [ ] Every finding tagged `[IN-SCOPE]` or `[FOLLOW-UP]`
 
 ---
 
@@ -1101,10 +1115,10 @@ Do not approve a change that contains a blocker/critical issue.
 
 ## Findings
 
-For each issue:
+For each issue, tag the severity and scope:
 
 ```text
-[SEVERITY] path/to/File.java:123
+[IN-SCOPE] [SEVERITY] path/to/File.java:123
 
 Problem:
 ...
@@ -1119,6 +1133,16 @@ Recommendation:
 Order findings by severity.
 
 Do not report more than one finding for the same underlying problem.
+
+## Follow-up / Out-of-scope
+
+List every `[FOLLOW-UP]` item separately, with a one-line reason and a suggested approach:
+
+- edge cases not handled by the ticket's scope
+- unclear or ambiguous spec points needing a decision later
+- out-of-scope ideas, refactors, or nice-to-haves
+
+These are non-blocking and will be tracked as follow-up tasks — never as changes to this issue.
 
 ## Strengths
 
@@ -1162,6 +1186,8 @@ Risk: LOW | MEDIUM | HIGH | CRITICAL
 ```
 
 Then give a short justification.
+
+The verdict must be based only on `[IN-SCOPE]` BLOCKER, CRITICAL, or MAJOR findings. MINOR, NIT, and all `[FOLLOW-UP]` items never force REQUEST CHANGES — they are follow-up work.
 
 ---
 

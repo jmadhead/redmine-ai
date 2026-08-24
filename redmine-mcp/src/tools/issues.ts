@@ -99,58 +99,6 @@ export function registerIssues(server: McpServer, client: RedmineClient, wrapHan
   );
 
   server.tool(
-    "redmine_get_issue",
-    "Get a single Redmine issue by ID. Returns full details including changes, relations, and custom fields.",
-    {
-      id: z
-        .number()
-        .int()
-        .positive()
-        .describe("Issue numeric ID"),
-    },
-    async ({ id }) => {
-      const issue = await client.getIssue(id);
-      const children = (issue.children || []).map((c: any) => ({
-        id: c.id,
-        subject: c.subject,
-        status: c.status?.name ?? c.status,
-        tracker: c.tracker?.name ?? c.tracker,
-      }));
-      return {
-        content: [
-          {
-            type: "text",
-            text: JSON.stringify(
-              {
-                id: issue.id,
-                project: issue.project,
-                tracker: issue.tracker,
-                status: issue.status,
-                priority: issue.priority,
-                subject: issue.subject,
-                description: issue.description,
-                assignee: issue.assigned_to,
-                author: issue.author,
-                start_date: issue.start_date,
-                due_date: issue.due_date,
-                done_ratio: issue.done_ratio,
-                created_on: issue.created_on,
-                updated_on: issue.updated_on,
-                relations: issue.relations,
-                notes: issue.journals?.map((j: any) => j.notes).join("\n") ?? "",
-                custom_fields: issue.custom_fields,
-                children,
-              },
-              null,
-              2
-            ),
-          },
-        ],
-      };
-    }
-  );
-
-  server.tool(
     "redmine_get_issue_children",
     "Get the child issues (subtasks) of a Redmine issue. Returns issues listed in the 'children' field of /issues/{id}.json?include=children response.",
     {
@@ -222,7 +170,7 @@ export function registerIssues(server: McpServer, client: RedmineClient, wrapHan
         .number()
         .int()
         .optional()
-        .describe("Priority ID (use redmine_get_priorities to see available options)"),
+        .describe("Priority ID (use redmine_get_context to see available options)"),
       status_id: z
         .number()
         .int()
@@ -290,7 +238,7 @@ export function registerIssues(server: McpServer, client: RedmineClient, wrapHan
 
   server.tool(
     "redmine_update_issue",
-    "Update an existing Redmine issue. Provide the issue ID and any fields to update. Use redmine_get_issue first to see current state including relations.",
+    "Update an existing Redmine issue. Provide the issue ID and any fields to update. Use redmine_issue_workflow first to see current state including relations.",
     {
       id: z
         .number()

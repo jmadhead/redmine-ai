@@ -205,7 +205,7 @@ redmine_redmine_update_issue(id=<A>, relations=[
 
 ### Reading Relations
 - Get an issue's relations: `redmine_redmine_get_relations(issue_id=<id>)`
-- Relations are included in `redmine_redmine_get_issue(id=<id>)` response under `relations` array
+- Relations are included in `redmine_redmine_issue_workflow(issue_id=<id>)` response under `relations` array
 
 ### Identifying Related Issues
 When creating an issue, check for existing related issues:
@@ -241,7 +241,7 @@ This returns all reference data needed: projects, issue statuses, trackers, cate
 8. Assign to responsible person (or leave unassigned for backlog)
 
 ### Updating Issues
-1. Always read current state: `redmine_redmine_get_issue(id=...)`
+1. Always read current state: `redmine_redmine_issue_workflow(issue_id=...)`
 2. Update only the fields that changed
 3. Add a `notes` field for private updates explaining the change
 4. Update `done_ratio` incrementally as work progresses (0-100)
@@ -289,8 +289,9 @@ When applicable, set categories for better filtering:
 ### Logging Time
 1. Get available activities from `redmine_redmine_get_context(project_id=...)`
 2. Create time entry: `redmine_redmine_create_time_entry(issue_id=..., hours=..., activity_id=..., comment=..., spent_on=...)`
-3. Always add a descriptive `comment` explaining what the time was spent on
-4. Use `spent_on` for past dates when logging retroactively
+3. When the time entry accompanies a status change or progress update, use `redmine_log_work(issue_id=..., hours=..., activity_id=..., comment=..., status="...", done_ratio=...)` to do both in one call
+4. Always add a descriptive `comment` explaining what the time was spent on
+5. Use `spent_on` for past dates when logging retroactively
 
 ### Time Entry Format
 ```markdown
@@ -335,11 +336,12 @@ redmine_redmine_list_issues(offset=25, limit=25, project_id="myproject")
 - Find all open issues: `status_id="*"`, `project_id="..."` (status * = all open)
 - Find closed issues for reporting: `status_id="3"`, `project_id="..."`
 - Find issues assigned to a user: `assignee_id="..."`, `project_id="..."`
-- Find issues related to a component: `subject="[component]"`, `project_id="..."`
+- Find issues related to a component: `redmine_redmine_list_issues(subject="[component]", project_id="...")`
+- Find a specific task from a fuzzy description: `redmine_redmine_list_issues(subject="fragment of subject", project_id="...")`
 
 ### Checking for Duplicates
 Before creating a new issue:
-1. Search by subject keyword: `redmine_redmine_list_issues(subject="key words from subject", project_id="...")`
+1. Search by subject keyword: `redmine_redmine_list_issues(subject="key words from subject", project_id="...")` — matches subject case-insensitively and returns links
 2. Search by component: `redmine_redmine_list_issues(subject="[component]", project_id="...")`
 3. Review results for similar or duplicate issues
 4. Link to existing issues rather than creating new ones
@@ -362,16 +364,26 @@ Before creating a new issue:
 ### Updating Multiple Issues
 When making changes across multiple issues:
 1. List matching issues: `redmine_redmine_list_issues(...)`
-2. Read each issue if needed: `redmine_redmine_get_issue(id=...)`
+2. Read each issue if needed: `redmine_redmine_issue_workflow(issue_id=...)`
 3. Update in batches: `redmine_redmine_update_issue(id=..., ...)`
 4. Log changes with descriptive notes
 
 ### Creating Related Issues in Sequence
 When creating a parent with multiple subtasks:
-1. Create parent issue first
-2. Get parent ID from response
-3. Create each subtask with `parent_issue_id=parentId`
-4. Update parent if needed after all subtasks are created
+1. **Prefer `redmine_create_issue_tree`** for a parent + its subtasks in a single call. Pass `custom_fields` (Task Type) on the parent and on each child as needed:
+   ```
+   redmine_create_issue_tree(
+     project_id=<project_id>,
+     subject="[api] Implement pool filtering by yield range",
+     custom_fields=[{id: <task_type_field_id>, value: "Technical Debt"}],
+     children=[
+       {subject: "[api] Add yield range query parameters", custom_fields:[{id: <task_type_field_id>, value: "Technical Debt"}]},
+       {subject: "[api] Implement range validation logic"}
+     ]
+   )
+   ```
+2. Or, manually: create parent first, get parent ID from response, then create each subtask with `parent_issue_id=parentId`.
+3. Link subtask dependencies with `redmine_redmine_add_relation` after creation.
 
 ## Best Practices
 
@@ -427,11 +439,8 @@ When creating a parent with multiple subtasks:
 
 ### Completing Work
 - [ ] Verify all acceptance criteria are met
-- [ ] Update final done_ratio (usually 100%)
-- [ ] Log final time entries if needed
-- [ ] Close the issue (or transition to appropriate final status)
-- [ ] Close child subtasks if any remain open
-- [ ] Add completion notes for documentation
+- [ ] Use `redmine_complete_issue(issue_id=..., final_note=..., close_children=true)` to atomically: set 100% done, transition to the closed status, add a final note, and close open subtasks (optionally passing `remaining_hours` to log final time)
+- [ ] Or manually: update final done_ratio (usually 100%), log final time entries if needed, close the issue (or transition to appropriate final status), close child subtasks, add completion notes
 
 ### Working with Subtasks
 - [ ] Break parent into logical, independent units

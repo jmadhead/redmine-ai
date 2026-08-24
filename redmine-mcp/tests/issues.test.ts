@@ -23,11 +23,10 @@ describe('registerIssues', () => {
     (fetchImpl.fn as jest.Mock).mockClear();
   });
 
-  it('should register 9 issue tools', () => {
+  it('should register 8 issue tools', () => {
     registerIssues(server, client);
-    expect(server.tool).toHaveBeenCalledTimes(9);
+    expect(server.tool).toHaveBeenCalledTimes(8);
     expect(server.tool).toHaveBeenCalledWith('redmine_list_issues', expect.any(String), expect.any(Object), expect.any(Function));
-    expect(server.tool).toHaveBeenCalledWith('redmine_get_issue', expect.any(String), expect.any(Object), expect.any(Function));
     expect(server.tool).toHaveBeenCalledWith('redmine_get_issue_children', expect.any(String), expect.any(Object), expect.any(Function));
     expect(server.tool).toHaveBeenCalledWith('redmine_create_issue', expect.any(String), expect.any(Object), expect.any(Function));
     expect(server.tool).toHaveBeenCalledWith('redmine_update_issue', expect.any(String), expect.any(Object), expect.any(Function));
@@ -70,26 +69,12 @@ describe('registerIssues', () => {
       total_count: 1,
     });
 
-    await listIssuesHandler({ offset: 0, limit: 25, project_id: '1' });
+    await listIssuesHandler({ offset: 0, limit: 25, project_id: '1', subject: 'login' });
     const mockFn = globalThis.fetch as jest.Mock;
     const calls = mockFn.mock.calls;
     expect(calls.length).toBeGreaterThan(0);
     expect(calls[0][0]).toContain('project_id=1');
-  });
-
-  it('redmine_get_issue should return single issue details', async () => {
-    registerIssues(server, client);
-    const getIssueCall = server.tool.mock.calls.find((call: any[]) => call[0] === 'redmine_get_issue');
-    const getIssueHandler = getIssueCall[3];
-
-    const issue = issueFixture({ id: 100, subject: 'Test Issue' });
-    setupMockResponse('/issues/100.json', { issue });
-
-    const result = await getIssueHandler({ id: 100 });
-    expect(result.content[0].type).toBe('text');
-    const parsed = JSON.parse(result.content[0].text);
-    expect(parsed.id).toBe(100);
-    expect(parsed.subject).toBe('Test Issue');
+    expect(decodeURIComponent(calls[0][0])).toContain('subject~=login');
   });
 
   it('redmine_update_issue should accept relations parameter (adds via POST)', async () => {

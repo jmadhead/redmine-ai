@@ -116,7 +116,10 @@ export class RedmineClient {
 
     for (const [key, value] of Object.entries(filters)) {
       if (value) {
-        params.set(key, value);
+        // Redmine's `~` operator matches substrings on text fields. Translate
+        // the `subject` filter so callers can pass a keyword/contains match.
+        const paramKey = key === "subject" ? "subject~" : key;
+        params.set(paramKey, value);
       }
     }
 
@@ -150,12 +153,13 @@ export class RedmineClient {
   }
 
   async createIssue(payload: Record<string, unknown>): Promise<RedmineIssue> {
-    return redmineRequest(
+    const response = await redmineRequest<{ issue: RedmineIssue }>(
       this.config,
       "/issues.json",
       "POST",
       payload
     );
+    return response.issue;
   }
 
   async updateIssue(
@@ -332,13 +336,23 @@ export class RedmineClient {
   }
 
   async getTimeEntry(id: number): Promise<RedmineTimeEntry> {
-    return redmineRequest(this.config, `/time_entries/${id}.json`);
+    const response = await redmineRequest<{ time_entry: RedmineTimeEntry }>(
+      this.config,
+      `/time_entries/${id}.json`
+    );
+    return response.time_entry;
   }
 
   async createTimeEntry(
     payload: Record<string, unknown>
   ): Promise<RedmineTimeEntry> {
-    return redmineRequest(this.config, "/time_entries.json", "POST", payload);
+    const response = await redmineRequest<{ time_entry: RedmineTimeEntry }>(
+      this.config,
+      "/time_entries.json",
+      "POST",
+      payload
+    );
+    return response.time_entry;
   }
 
   async updateTimeEntry(
@@ -489,6 +503,30 @@ export class RedmineClient {
     } catch {
       return [];
     }
+  }
+
+  async getIssuePriorities(): Promise<RedmineIssueStatus[]> {
+    const response = await redmineRequest<{ issue_priorities: RedmineIssueStatus[] }>(
+      this.config,
+      "/enumerations/issue_priorities.json"
+    );
+    return response.issue_priorities ?? [];
+  }
+
+  async getTimeEntryActivities(): Promise<RedmineTracker[]> {
+    const response = await redmineRequest<{ time_entry_activities: RedmineTracker[] }>(
+      this.config,
+      "/enumerations/time_entry_activities.json"
+    );
+    return response.time_entry_activities ?? [];
+  }
+
+  async getCurrentUser(): Promise<RedmineUser> {
+    const response = await redmineRequest<{ user: RedmineUser }>(
+      this.config,
+      "/users/current.json"
+    );
+    return response.user;
   }
 
   async getContext(projectId?: string): Promise<{

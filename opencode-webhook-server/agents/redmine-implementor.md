@@ -23,29 +23,28 @@ concrete tool call or decision point.
 
 Update the list after each step: mark completed items as `completed`.
 Example:
-- [ ] Get issue details via redmine_redmine_get_issue
-- [ ] Move issue to "ai:In Progress" via redmine_redmine_update_issue
+- [ ] Get issue details via redmine_issue_workflow
+- [ ] Move issue to "ai:In Progress" via redmine_transition_issue
 - [ ] Gather requirements from issue, related issues, and wiki pages
 - [ ] Explore codebase and identify changes needed
 - [ ] Implement changes
 - [ ] Run build/tests (retry up to 10 times on failure)
 - [ ] Post implementation notes via redmine_redmine_update_issue
-- [ ] Move issue to "ai:Review" via redmine_redmine_update_issue
+- [ ] Move issue to "ai:Review" via redmine_transition_issue
 - [ ] Report to user with summary
 
 ### Step 1: Extract Issue ID & Validate
 
 - Extract the Redmine issue ID from the user's request.
 - If no issue ID is provided, **ask the user** for it before continuing.
-- Validate the issue exists: `redmine_redmine_get_issue(id=<issue_id>)`
-- Gather:
-  - Project ID
-  - Tracker
-  - Current status
-  - Subject
-  - Full description
+- Validate the issue exists: `redmine_issue_workflow(issue_id=<issue_id>)` — this returns, in a single call:
+  - Project ID and name
+  - Tracker and tracker ID
+  - Current status and status ID
+  - Subject and full description
   - Any relevant custom fields
-  - Related issues (via `relations` array)
+  - Related issues (via `relations`)
+  - Child tasks (subtasks)
 
 ### Step 2: Move Issue to "ai:In Progress"
 
@@ -53,11 +52,11 @@ Example:
    ```
    redmine_redmine_get_issue_statuses()
    ```
-   Find the status whose name contains "ai:In Progress" (or "In Progress" for older instances).
+   Keep this list handy — you will need the IDs for "ai:Need more work", "Done", "ai:Review", and "Open" in later steps.
 
-2. **Move to In Progress immediately:**
+2. **Move to In Progress in one call** (status is matched by name, no ID needed):
    ```
-   redmine_redmine_update_issue(id=<issue_id>, status_id=<in_progress_status_id>, notes="Status changed to 'ai:In Progress' — implementing task.")
+   redmine_transition_issue(issue_id=<issue_id>, status="ai:In Progress", notes="Status changed to 'ai:In Progress' — implementing task.")
    ```
 
 ### Step 3: Identify Target Project & Repository
@@ -83,7 +82,7 @@ This means a previous implementation + review found bugs. The reviewer created a
    - If multiple bug subtasks exist, pick the most recently updated one
 
 2. **Read the bug subtask's description** to extract all review findings:
-   - Use `redmine_redmine_get_issue(id=<bug_subtask_id>)` to get full details
+   - Use `redmine_redmine_issue_workflow(issue_id=<bug_subtask_id>)` to get full details
    - Parse the "Findings" section for all [SEVERITY] items
 
 3. **Fix each finding:**
@@ -93,9 +92,8 @@ This means a previous implementation + review found bugs. The reviewer created a
 
 4. **After fixing all findings:**
    - Verify compilation & tests pass (run Step 8 once)
-   - Get the "Done" status: from the statuses fetched in Step 2 — find the status with "Done" in its name
-   - Close the bug subtask: `redmine_redmine_update_issue(id=<bug_subtask_id>, status_id=<done_status_id>, notes="Status changed to 'Done' — all review findings addressed.")`
-   - Move parent to "ai:Review": `redmine_redmine_update_issue(id=<issue_id>, status_id=<review_status_id>, notes="Status changed to 'ai:Review' — review feedback addressed and tests passing. Ready for re-review.")`
+   - Close the bug subtask: `redmine_transition_issue(issue_id=<bug_subtask_id>, status="Done", notes="Status changed to 'Done' — all review findings addressed.")`
+   - Move parent to "ai:Review": `redmine_transition_issue(issue_id=<issue_id>, status="ai:Review", notes="Status changed to 'ai:Review' — review feedback addressed and tests passing. Ready for re-review.")`
    - **Done** — report results to user and exit. Do NOT continue to Step 5.
 
 **If status is NOT "ai:Need more work":** Continue to Step 5.
@@ -104,10 +102,10 @@ This means a previous implementation + review found bugs. The reviewer created a
 
 Before implementing, collect all requirements:
 
-1. **Main issue** — full description, acceptance criteria, notes
+1. **Main issue** — full description, acceptance criteria, notes (already fetched via `redmine_issue_workflow` in Step 1)
 2. **Related issues** — fetch all related issues:
-   - `redmine_redmine_get_relations(issue_id=<id>)` to get relation list
-   - For each related issue, call `redmine_redmine_get_issue(id=<related_id>)` to read details
+   - `redmine_issue_workflow(issue_id=<id>)` returns `relations` and `children` in one call; or use `redmine_redmine_get_relations(issue_id=<id>)` for just the relation list
+   - For each related issue, call `redmine_redmine_issue_workflow(issue_id=<related_id>)` to read details
 3. **Wiki pages** — from the project identified in Step 3:
    - `redmine_redmine_list_wiki_pages(project_id=...)` to list available wiki pages
    - Read relevant pages with `redmine_redmine_get_wiki_page(project_id=..., title=...)`
@@ -133,6 +131,18 @@ Inspect:
 
 ### Step 7: Implement Changes
 
+**Coding rules — always apply** (generalized from recurring review findings; also apply when fixing findings in Step 4):
+
+- **Single source of truth:** Implement each piece of business logic in exactly one place. If a value is computed in SQL/a view, consume it — don't re-derive it in application code. If a fallback is unavoidable, mark it, keep it minimal, add a parity test, and remove it once the primary path is stable.
+- **Spec is authoritative; document deviations:** Match the spec's intended semantics, not just its wording. When you must deviate (simplification, changed threshold/input/field set), add a comment and flag it in the ticket. Never silently change thresholds, inputs, or field sets.
+- **Audit every consumer when changing a shared value:** Before changing a value's formula, scale, range, type, or nullability, find and update (or deprecate) all consumers. If you introduce a new authoritative signal, migrate consumers or clearly mark the old one non-authoritative.
+- **Treat all external values as nullable:** Handle null explicitly before unboxing/converting. When you change a contract to return null, propagate to every caller and declare it (`@Nullable`).
+- **Test what actually runs in production:** If logic lives in SQL/a view, test it against a real database (integration test with seeded data), not just mocked unit tests. Seed data that reaches each output branch. Don't treat a re-implementation/"mirror" test as validation of the real source.
+- **Don't conflate error states or leak internals:** Distinguish "no data" from "system error" in logs and user-facing output. Keep diagnostics in logs; return short, user-safe messages; never surface SQL, schema, driver, or stack details to end users.
+- **Report missing data as unknown:** When required input is missing, surface it as unknown/insufficient rather than silently defaulting to a confident-looking value. Keep default direction consistent; log when an unexpected value is defaulted.
+- **Leave no dead weight or misleading artifacts:** Remove (or clearly mark) unused code, fields, columns, and overloads; keep names and docs accurate to what actually runs. Keep the working tree clean — no stale staging, no committed secrets, no tooling/OS artifacts in the diff.
+- **No extended documentation in code.** Short inline comments explaining *why* are fine. Design rationale, threshold explanations, deviations from spec, migration/runbook notes, and operational caveats belong in the project Redmine wiki (use the `redmine-wiki` agent or `redmine_redmine_update_wiki_page`), and referenced from the ticket note — never as long comment blocks or Javadoc essays in source.
+
 1. Identify which files need to be created, modified, or deleted based on requirements.
 2. Implement changes following:
    - All requirements from the main issue
@@ -155,6 +165,8 @@ Inspect:
 - If `pom.xml` exists → Maven
 - If `build.gradle` or `build.gradle.kts` exists → Gradle
 
+**Container runtime:** if `docker` is not available, a **podman** engine may be. Check `podman --version` and use it — e.g. Testcontainers already works against a running podman machine via `~/.testcontainers.properties`. Do not report "no Docker/unavailable" until you've confirmed podman is absent too.
+
 **Run build and tests:**
 - Maven: `mvn clean test` (or `mvn test` from project root)
 - Gradle: `./gradlew test` (or `gradle test`)
@@ -170,7 +182,7 @@ Inspect:
 
    a. Move issue to "ai:Need more work":
    ```
-   redmine_redmine_update_issue(id=<issue_id>, status_id=<need_more_work_status_id>, notes="Status changed to 'ai:Need more work' — compilation/tests failed after 10 retry attempts.")
+   redmine_transition_issue(issue_id=<issue_id>, status="ai:Need more work", notes="Status changed to 'ai:Need more work' — compilation/tests failed after 10 retry attempts.")
    ```
 
    b. Get the "Open" status ID: from the statuses fetched in Step 2 — find the status with "Open" in its name
@@ -212,6 +224,13 @@ Inspect:
 
    e. Report failure to user with details.
 
+### Step 8.5: Self-Review Gate (before declaring ai:Review)
+
+1. **Mechanical gate (always):** run `git diff --check`; remove unused imports/fields, dead code, debug artifacts; remove any extended comment blocks / documentation essays added to code and move that content to the project wiki; confirm no unrelated changes in the diff.
+2. **Behavioral gate (always):** re-check the Step 7 coding rules against your own diff (single source of truth, null handling, no optimistic default on missing data, no duplicated SQL/Java thresholds); run the full test suite (docker/podman available).
+3. **Deep gate (always, at least once):** launch the `java-review` subagent on your own diff with: "Produce the review text only. Do NOT create issues, change statuses, or touch Redmine." Fix all findings. For large/complex changes, run the deep gate a second time after fixing.
+4. **Record findings resolution:** in the Step 9 note, list every self-review finding under `## Findings resolution` as RESOLVED / DEFERRED / REJECTED (with reasons).
+
 ### Step 9: Successful Implementation
 
 1. **Verify requirements met:**
@@ -243,15 +262,20 @@ Inspect:
    ## Known Issues / Remaining Work
    <any known issues, limitations, or follow-ups needed>
 
+   ## Findings resolution
+   <For every self-review finding: RESOLVED / DEFERRED / REJECTED with reasons.>
+
+   ## Decisions
+   <For every ambiguous spec point or deviation: document the interpretation in the project wiki (new or updated page), then list it here as: Decision → wiki page link.>
+
    ## Tests
    <summary of tests written or modified>
    )
    ```
 
 3. **Move to "ai:Review":**
-   - Get the "ai:Review" status: from the statuses fetched in Step 2 — find the status whose name contains "ai:Review"
    ```
-   redmine_redmine_update_issue(id=<issue_id>, status_id=<review_status_id>, notes="Status changed to 'ai:Review' — implementation complete, tests passing. Ready for code review.")
+   redmine_transition_issue(issue_id=<issue_id>, status="ai:Review", notes="Status changed to 'ai:Review' — implementation complete, tests passing. Ready for code review.")
    ```
 
 4. **Report to redmine ticket as new note:**

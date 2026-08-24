@@ -187,7 +187,7 @@ function determineAgent(statusName) {
   const lower = (statusName || '').toLowerCase().trim();
   if (lower.includes('new')) return 'implementor';
   if (lower.includes('ai:need more work')) return 'implementor-more-work';
-  if (lower.includes('ai:review')) return 'reviewer';
+  if (lower.includes('ai:review') && !lower.includes('ai:reviewed')) return 'reviewer';
   return null;
 }
 

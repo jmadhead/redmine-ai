@@ -163,7 +163,7 @@ export function registerTimeEntries(
       activity_id: z
         .number()
         .int()
-        .describe("Time entry activity ID (use redmine_get_time_activities to see options)"),
+        .describe("Time entry activity ID (use redmine_get_context to see available options)"),
       comment: z
         .string()
         .optional()

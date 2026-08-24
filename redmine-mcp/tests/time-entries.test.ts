@@ -100,7 +100,7 @@ describe('registerTimeEntries', () => {
     const getTimeEntryHandler = getTimeEntryCall[3];
 
     const entry = timeEntryFixture({ id: 1001, hours: 3.5 });
-    setupMockResponse('/time_entries/1001.json', entry);
+    setupMockResponse('/time_entries/1001.json', { time_entry: entry });
 
     const result = await getTimeEntryHandler({ id: 1001 });
     expect(result.content[0].type).toBe('text');
@@ -114,7 +114,7 @@ describe('registerTimeEntries', () => {
     const createTimeEntryHandler = createTimeEntryCall[3];
 
     const entry = timeEntryFixture({ id: 2001, hours: 2.0, activity: { id: 5, name: 'Development' } });
-    setupMockResponse('/time_entries.json', entry);
+    setupMockResponse('/time_entries.json', { time_entry: entry });
 
     const result = await createTimeEntryHandler({
       hours: 2.0,
@@ -181,8 +181,8 @@ describe('registerTimeEntries', () => {
           ok: true,
           status: 200,
           headers: new Headers({ 'Content-Type': 'application/json' }),
-          json: () => Promise.resolve(entry),
-          text: () => Promise.resolve(JSON.stringify(entry)),
+          json: () => Promise.resolve({ time_entry: entry }),
+          text: () => Promise.resolve(JSON.stringify({ time_entry: entry })),
         } as unknown as Response);
       }
       return Promise.resolve({

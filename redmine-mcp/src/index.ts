@@ -9,6 +9,7 @@ import { registerTimeEntries } from "./tools/time-entries.js";
 import { registerTracking } from "./tools/tracking.js";
 import { registerContext } from "./tools/context.js";
 import { registerWiki } from "./tools/wiki.js";
+import { registerWorkflows } from "./tools/workflows.js";
 
 function getRedmineConfig(): { url: string; apiKey: string } {
   const url =
@@ -70,6 +71,7 @@ async function main() {
   registerTracking(server, client, loggedHandler);
   registerContext(server, client, loggedHandler);
   registerWiki(server, client, loggedHandler);
+  registerWorkflows(server, client, loggedHandler);
 
   const transport = new StdioServerTransport();
   await server.connect(transport);
