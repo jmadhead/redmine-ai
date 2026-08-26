@@ -142,6 +142,26 @@ Inspect:
 - **Report missing data as unknown:** When required input is missing, surface it as unknown/insufficient rather than silently defaulting to a confident-looking value. Keep default direction consistent; log when an unexpected value is defaulted.
 - **Leave no dead weight or misleading artifacts:** Remove (or clearly mark) unused code, fields, columns, and overloads; keep names and docs accurate to what actually runs. Keep the working tree clean — no stale staging, no committed secrets, no tooling/OS artifacts in the diff.
 - **No extended documentation in code.** Short inline comments explaining *why* are fine. Design rationale, threshold explanations, deviations from spec, migration/runbook notes, and operational caveats belong in the project Redmine wiki (use the `redmine-wiki` agent or `redmine_redmine_update_wiki_page`), and referenced from the ticket note — never as long comment blocks or Javadoc essays in source.
+- **SOLID.** Apply all five principles; depend on abstractions, not concretions; prefer extension over modification.
+- **KISS.** Use the simplest solution that satisfies the requirements; no speculative abstractions or patterns.
+- **DRY.** Extract genuinely repeated logic once; don't force reuse where duplication is cheaper than an abstraction.
+- **Keep parameter count ≤ 3.** If a method needs more, group them into a DTO/record/parameter object.
+- **No unused helpers.** Don't create small methods called once or never; extract only when reused or readability demands it.
+- **Resource bundles.** All customer-facing strings live in resource bundles, never hardcoded; log messages may stay in code.
+- **Null safety.** Use `Optional` at API boundaries, annotate `@Nullable`/`@NonNull`, and never pass null where a non-null contract exists.
+- **No defensive programming.** Validate only at trust boundaries (input, deserialization, external calls); don't guard against impossible states — redundant checks hide real bugs.
+- **Single responsibility.** One reason to change per class and per method; split otherwise.
+- **Don't refactor untouched code.** No drive-by refactoring or reformatting of unrelated classes; keep diffs reviewable.
+- **Composition over inheritance.** Prefer composition and interfaces; inheritance only for a genuine is-a relationship.
+- **Fail fast.** Validate at boundaries and throw clear exceptions early rather than degrading silently.
+- **Prefer immutability.** Use `final` fields, immutable collections, and records for simple data carriers.
+- **No magic numbers/strings.** Use named constants or enums; prefer enums over string constants.
+- **Meaningful names.** Intention-revealing names; no abbreviations or single letters.
+- **Handle exceptions deliberately.** Never swallow exceptions; catch the most specific type; log with context.
+- **Constructor injection.** Prefer it over field or setter injection for dependencies.
+- **Small focused methods.** Keep methods small enough to fit on a screen; use early returns/guard clauses over deep nesting.
+- **No premature optimization.** Write clear, correct code first; optimize only with evidence.
+- **No static business-logic utilities.** Statics only for pure functions (formatting, conversions).
 
 1. Identify which files need to be created, modified, or deleted based on requirements.
 2. Implement changes following:
